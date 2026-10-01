@@ -1,0 +1,34 @@
+# Environment variables and secrets
+/.env
+/.env.local
+
+# Gradle & Build output
+/.gradle/
+/build/
+/bin/
+/out/
+
+# IDE & Editor files
+/.idea/
+/.vscode/
+/*.iml
+/*.ipr
+/*.iws
+/.settings/
+/.project
+/.classpath
+
+# Runtime data & logs
+/data/
+/logs/
+/*.log
+
+# OS generated files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Compiled binaries & JARs (except wrapper)
+*.class
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
