@@ -42,8 +42,12 @@ public class ServerConfig {
 
         this.osuApiKey = dotenv.get("OSU_API_KEY", "");
         this.directSearch = dotenv.get("DIRECT_SEARCH", "https://osu.direct/api/search");
+        this.directSearchV2 = dotenv.get("DIRECT_SEARCH_V2", "https://catboy.best/api/v2/search");
+        this.directDownload = dotenv.get("DIRECT_DOWNLOAD", "https://catboy.best/d");
     }
 
     public final String osuApiKey;
     public final String directSearch;
+    public final String directSearchV2;
+    public final String directDownload;
 }

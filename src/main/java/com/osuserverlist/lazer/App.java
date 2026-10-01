@@ -10,6 +10,7 @@ import io.javalin.Javalin;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.List;
 import java.util.Map;
 
 public class App {
@@ -45,6 +46,7 @@ public class App {
         MiscHandler miscHandler = new MiscHandler();
         SoloScoreHandler soloScoreHandler = new SoloScoreHandler(authService, databaseManager, config);
         BeatmapHandler beatmapHandler = new BeatmapHandler(databaseManager, config);
+        RankingsHandler rankingsHandler = new RankingsHandler(databaseManager, config);
 
         Javalin app = Javalin.create(javalinConfig -> {
             javalinConfig.bundledPlugins.enableCors(cors -> {
@@ -93,7 +95,20 @@ public class App {
             javalinConfig.routes.get("/api/v2/users/{user_id}/beatmapsets/{type}", ctx -> ctx.json(java.util.Collections.emptyList()));
             javalinConfig.routes.get("/api/v2/users/{user_id}/kudosu", ctx -> ctx.json(java.util.Collections.emptyList()));
 
-            // Beatmaps & Solo Scores
+            // Rankings & Leaderboards
+            javalinConfig.routes.get("/api/v2/rankings/{ruleset}/{type}", rankingsHandler::handleGetRankings);
+            javalinConfig.routes.get("/api/v2/rankings/{ruleset}/country", rankingsHandler::handleGetCountryRankings);
+            javalinConfig.routes.get("/api/v2/rankings/kudosu", rankingsHandler::handleGetKudosuRankings);
+            javalinConfig.routes.get("/api/v2/rankings/{ruleset}/spotlight", rankingsHandler::handleGetRankings);
+            javalinConfig.routes.get("/api/v2/rankings/{ruleset}/spotlights", rankingsHandler::handleGetRankings);
+            javalinConfig.routes.get("/api/v2/spotlights", rankingsHandler::handleGetSpotlights);
+
+            // Beatmaps, Search & Downloads
+            javalinConfig.routes.get("/api/v2/beatmapsets/search", beatmapHandler::handleSearchBeatmapsets);
+            javalinConfig.routes.get("/api/v2/beatmapsets/{beatmapset_id}/download", beatmapHandler::handleDownloadBeatmapset);
+            javalinConfig.routes.get("/d/{id}", beatmapHandler::handleLegacyDownload);
+            javalinConfig.routes.get("/web/osu-search.php", beatmapHandler::handleLegacySearch);
+            javalinConfig.routes.get("/web/osu-search-set.php", beatmapHandler::handleLegacySearchSet);
             javalinConfig.routes.post("/api/v2/beatmaps/{beatmap_id}/solo/scores", soloScoreHandler::handleCreateScoreToken);
             javalinConfig.routes.put("/api/v2/beatmaps/{beatmap_id}/solo/scores/{token}", soloScoreHandler::handleSubmitScore);
             javalinConfig.routes.get("/api/v2/beatmaps/{beatmap_id}/scores", soloScoreHandler::handleGetBeatmapScores);
@@ -116,6 +131,13 @@ public class App {
             javalinConfig.routes.get("/api/v2/chat/updates", chatHandler);
 
             // Misc & Assets
+            javalinConfig.routes.get("/api/v2/comments", ctx -> ctx.json(Map.of(
+                    "comments", List.of(),
+                    "has_more", false,
+                    "total", 0,
+                    "users", List.of()
+            )));
+            javalinConfig.routes.get("/api/v2/news", ctx -> ctx.json(Map.of("news_posts", List.of())));
             javalinConfig.routes.get("/api/v2/seasonal-backgrounds", miscHandler);
             javalinConfig.routes.get("/api/v1/banner/{file}", miscHandler);
             javalinConfig.routes.get("/a/{id}", miscHandler);
