@@ -1,8 +1,10 @@
 package com.osuserverlist.lazer.handlers;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.osuserverlist.lazer.anticheat.ScoreAntiCheat;
 import com.osuserverlist.lazer.auth.AuthService;
 import com.osuserverlist.lazer.auth.TokenStore;
+import com.osuserverlist.lazer.calculators.ScoreSimulator;
 import com.osuserverlist.lazer.config.ServerConfig;
 import com.osuserverlist.lazer.database.DatabaseManager;
 import com.osuserverlist.lazer.models.BeatmapRecord;
@@ -160,18 +162,31 @@ public class SoloScoreHandler {
         if (modsList == null) modsList = Collections.emptyList();
         int modsBitmask = UserResponseBuilder.modsToInt(modsList);
 
+        if (!UserResponseBuilder.isScoreRankedForPp(modsList, modsBitmask, rulesetId)) {
+            pp = 0.0f;
+        }
+
         Map<String, Object> statistics = (Map<String, Object>) body.get("statistics");
-        if (statistics == null) statistics = Collections.emptyMap();
-
-        Map<String, Object> maximumStatistics = (Map<String, Object>) body.get("maximum_statistics");
-        if (maximumStatistics == null) maximumStatistics = Collections.emptyMap();
-
         int n300 = getStat(statistics, "great", "Great", "300");
         int n100 = getStat(statistics, "ok", "Ok", "100");
         int n50 = getStat(statistics, "meh", "Meh", "50");
         int nmiss = getStat(statistics, "miss", "Miss");
         int ngeki = getStat(statistics, "perfect", "Perfect");
         int nkatu = getStat(statistics, "good", "Good");
+
+        BeatmapRecord beatmap = databaseManager.findBeatmapById(beatmapId);
+        if (beatmap == null && tokenInfo.beatmapHash != null && !tokenInfo.beatmapHash.isBlank()) {
+            beatmap = databaseManager.findBeatmapByMd5(tokenInfo.beatmapHash);
+        }
+
+        Map<String, Object> maximumStatistics = (Map<String, Object>) body.get("maximum_statistics");
+        if (maximumStatistics == null || maximumStatistics.isEmpty()) {
+            maximumStatistics = new LinkedHashMap<>();
+            int mapMax = (beatmap != null && beatmap.maxCombo > 0) ? beatmap.maxCombo : (n300 + n100 + n50 + nmiss);
+            if (mapMax > 0) {
+                maximumStatistics.put("great", mapMax);
+            }
+        }
 
         // Object count for classic conversion from maximum_statistics or hit statistics
         int objectCount = 0;
@@ -189,10 +204,59 @@ public class SoloScoreHandler {
             timeElapsed = getInt(body, "time_elapsed", timeElapsed);
         }
 
+        int effectiveMode = UserResponseBuilder.getEffectiveMode(rulesetId, modsBitmask);
+
+        ScoreAntiCheat.ValidationResult validation = ScoreAntiCheat.validateScore(
+                user.id,
+                beatmap,
+                effectiveMode,
+                totalScore,
+                totalScoreWithoutMods,
+                accuracy,
+                maxCombo,
+                pp,
+                passed,
+                modsBitmask,
+                n300, n100, n50, nmiss, ngeki, nkatu,
+                timeElapsed
+        );
+
+        if (!validation.isValid()) {
+            logger.warn("Anticheat rejected score submission: user={} ({}) map={} reason={}",
+                    user.id, user.name, beatmapId, validation.getReason());
+            ctx.status(400).json(Map.of("error", "Score rejected by anticheat: " + validation.getReason()));
+            return;
+        }
+
+        // Server-side simulation: never trust client accuracy, grade or PP
+        ScoreSimulator.SimulationResult sim = ScoreSimulator.simulateAndValidate(
+                user.id,
+                beatmap,
+                effectiveMode,
+                totalScore,
+                accuracy,
+                maxCombo,
+                passed,
+                modsBitmask,
+                n300, n100, n50, nmiss, ngeki, nkatu,
+                timeElapsed
+        );
+
+        if (!sim.valid) {
+            logger.warn("Score rejected after simulation: user={} map={} reason={}",
+                    user.id, beatmapId, sim.rejectionReason);
+            ctx.status(400).json(Map.of("error", "Score rejected by simulation: " + sim.rejectionReason));
+            return;
+        }
+
+        accuracy = sim.accuracy;
+        rank = sim.grade;
+        pp = sim.pp;
+
         DatabaseManager.ScoreSubmitResult submitResult = databaseManager.submitScore(
                 user.id,
                 beatmapId,
-                rulesetId,
+                effectiveMode,
                 totalScore,
                 totalScoreWithoutMods,
                 accuracy,
@@ -239,9 +303,33 @@ public class SoloScoreHandler {
         response.put("position", submitResult.position);
         response.put("pp", sc.pp > 0 ? (double) sc.pp : null);
         response.put("has_replay", false);
-        response.put("ranked", true);
-        response.put("ruleset_id", sc.mode);
+        response.put("ranked", sc.mapStatus > 0);
+        response.put("preserve", submitResult.isPersonalBest || sc.pp > 0);
+        response.put("processed", true);
+        response.put("ruleset_id", sc.mode % 4);
         response.put("beatmap_id", sc.mapId);
+
+        Map<String, Object> bm = new LinkedHashMap<>();
+        if (beatmap != null) {
+            bm.put("id", beatmap.id);
+            bm.put("beatmapset_id", beatmap.setId);
+            bm.put("version", beatmap.version);
+            bm.put("difficulty_rating", (double) beatmap.diff);
+            bm.put("status", BeatmapHandler.statusToString(beatmap.status));
+            bm.put("total_length", beatmap.totalLength);
+            bm.put("bpm", (double) beatmap.bpm);
+            bm.put("cs", (double) beatmap.cs);
+            bm.put("ar", (double) beatmap.ar);
+            bm.put("drain", (double) beatmap.hp);
+            bm.put("accuracy", (double) beatmap.od);
+            bm.put("max_combo", beatmap.maxCombo);
+            bm.put("checksum", beatmap.md5);
+            bm.put("mode_int", beatmap.mode);
+        } else {
+            bm.put("id", beatmapId);
+            bm.put("max_combo", maxCombo);
+        }
+        response.put("beatmap", bm);
 
         logger.info("Score {} submitted successfully for user {} on beatmap {}: score={}, pp={}, rank={}",
                 sc.id, user.id, beatmapId, sc.score, sc.pp, sc.grade);

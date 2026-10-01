@@ -42,6 +42,10 @@ public class PerformanceCalculator {
             float fallbackDiff,
             long totalScore
     ) {
+        if (!com.osuserverlist.lazer.handlers.UserResponseBuilder.isScoreRankedForPp(null, modsBitmask, rulesetId)) {
+            return 0.0f;
+        }
+
         if (beatmapId <= 0) {
             return fallbackPp(fallbackDiff, totalScore);
         }
@@ -53,7 +57,8 @@ public class PerformanceCalculator {
 
         try {
             Beatmap beatmap = Beatmap.fromBytes(mapBytes);
-            Ruleset ruleset = Ruleset.fromId(rulesetId);
+            int baseRuleset = rulesetId % 4;
+            Ruleset ruleset = Ruleset.fromId(baseRuleset);
             var ppCalc = PerformanceCalculatorFactory.create(ruleset);
             var diffCalc = DifficultyCalculatorFactory.create(ruleset, beatmap);
 

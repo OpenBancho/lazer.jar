@@ -28,6 +28,7 @@ public class ScoreRecord {
     // Beatmap fields
     public int mapId;
     public int setId;
+    public int mapStatus;
     public String artist = "";
     public String title = "";
     public String version = "";

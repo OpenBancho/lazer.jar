@@ -1,5 +1,7 @@
 package com.osuserverlist.lazer.database;
 
+import com.osuserverlist.lazer.anticheat.ScoreAntiCheat;
+import com.osuserverlist.lazer.calculators.ScoreSimulator;
 import com.osuserverlist.lazer.config.ServerConfig;
 import com.osuserverlist.lazer.handlers.UserResponseBuilder;
 import com.osuserverlist.lazer.models.BeatmapRecord;
@@ -235,6 +237,7 @@ public class DatabaseManager {
                 SELECT s.*,
                        COALESCE(u.name, '') AS user_name, COALESCE(u.country, 'XX') AS user_country,
                        COALESCE(m.id, 0) AS map_id, COALESCE(m.set_id, 0) AS set_id,
+                       COALESCE(m.status, 0) AS map_status,
                        COALESCE(m.artist, '') AS artist, COALESCE(m.title, '') AS title,
                        COALESCE(m.version, '') AS version, COALESCE(m.creator, '') AS creator,
                        COALESCE(m.diff, 0.0) AS diff, COALESCE(m.bpm, 0.0) AS bpm,
@@ -323,6 +326,7 @@ public class DatabaseManager {
         try {
             sc.mapId = rs.getInt("map_id");
             sc.setId = rs.getInt("set_id");
+            sc.mapStatus = rs.getInt("map_status");
             sc.artist = rs.getString("artist");
             sc.title = rs.getString("title");
             sc.version = rs.getString("version");
@@ -626,6 +630,7 @@ public class DatabaseManager {
                 SELECT s.*,
                        COALESCE(u.name, '') AS user_name, COALESCE(u.country, 'XX') AS user_country,
                        COALESCE(m.id, 0) AS map_id, COALESCE(m.set_id, 0) AS set_id,
+                       COALESCE(m.status, 0) AS map_status,
                        COALESCE(m.artist, '') AS artist, COALESCE(m.title, '') AS title,
                        COALESCE(m.version, '') AS version, COALESCE(m.creator, '') AS creator,
                        COALESCE(m.diff, 0.0) AS diff, COALESCE(m.bpm, 0.0) AS bpm,
@@ -665,6 +670,7 @@ public class DatabaseManager {
                 SELECT s.*,
                        COALESCE(u.name, '') AS user_name, COALESCE(u.country, 'XX') AS user_country,
                        COALESCE(m.id, 0) AS map_id, COALESCE(m.set_id, 0) AS set_id,
+                       COALESCE(m.status, 0) AS map_status,
                        COALESCE(m.artist, '') AS artist, COALESCE(m.title, '') AS title,
                        COALESCE(m.version, '') AS version, COALESCE(m.creator, '') AS creator,
                        COALESCE(m.diff, 0.0) AS diff, COALESCE(m.bpm, 0.0) AS bpm,
@@ -717,30 +723,66 @@ public class DatabaseManager {
             int timeElapsed,
             String beatmapHash
     ) {
+        int effectiveMode = UserResponseBuilder.getEffectiveMode(rulesetId, modsBitmask);
+        int baseRuleset = effectiveMode % 4;
+
         BeatmapRecord beatmap = findBeatmapById(beatmapId);
         if (beatmap == null && beatmapHash != null && !beatmapHash.isBlank()) {
             beatmap = findBeatmapByMd5(beatmapHash);
         }
+
+        ScoreAntiCheat.ValidationResult validation = ScoreAntiCheat.validateScore(
+                userId,
+                beatmap,
+                effectiveMode,
+                totalScore,
+                totalScoreWithoutMods,
+                accuracy,
+                maxCombo,
+                pp,
+                passed,
+                modsBitmask,
+                n300, n100, n50, nmiss, ngeki, nkatu,
+                timeElapsed
+        );
+
+        if (!validation.isValid()) {
+            logger.warn("Rejecting impossible score in DatabaseManager for user {} on beatmap {}: {}",
+                    userId, beatmapId, validation.getReason());
+            return null;
+        }
+
         String mapMd5 = (beatmap != null && beatmap.md5 != null && !beatmap.md5.isBlank())
                 ? beatmap.md5
                 : (beatmapHash != null ? beatmapHash : "");
         int mapStatus = (beatmap != null) ? beatmap.status : 0;
         int mapMaxCombo = (beatmap != null) ? beatmap.maxCombo : 0;
 
-        if (pp <= 0.0f && passed && beatmap != null) {
-            pp = com.osuserverlist.lazer.calculators.PerformanceCalculator.calculatePp(
-                    beatmap.id,
-                    rulesetId,
-                    modsBitmask,
-                    maxCombo,
-                    accuracy,
-                    n300, n100, n50, nmiss, ngeki, nkatu,
-                    beatmap.diff,
-                    totalScore
-            );
+        // Server-side simulation: never trust client accuracy, grade or PP
+        ScoreSimulator.SimulationResult sim = ScoreSimulator.simulateAndValidate(
+                userId,
+                beatmap,
+                effectiveMode,
+                totalScore,
+                accuracy,
+                maxCombo,
+                passed,
+                modsBitmask,
+                n300, n100, n50, nmiss, ngeki, nkatu,
+                timeElapsed
+        );
+
+        if (!sim.valid) {
+            logger.warn("Rejecting score in DatabaseManager after simulation for user {} on beatmap {}: {}",
+                    userId, beatmapId, sim.rejectionReason);
+            return null;
         }
 
-        long classicScore = UserResponseBuilder.convertStandardisedToClassic(rulesetId, totalScore, objectCount);
+        accuracy = sim.accuracy;
+        rank = sim.grade;
+        pp = sim.pp;
+
+        long classicScore = UserResponseBuilder.convertStandardisedToClassic(baseRuleset, totalScore, objectCount);
 
         try (Connection conn = getConnection()) {
             conn.setAutoCommit(false);
@@ -756,7 +798,7 @@ public class DatabaseManager {
                     try (PreparedStatement stmt = conn.prepareStatement(checkPbSql)) {
                         stmt.setInt(1, userId);
                         stmt.setString(2, mapMd5);
-                        stmt.setInt(3, rulesetId);
+                        stmt.setInt(3, effectiveMode);
                         try (ResultSet rs = stmt.executeQuery()) {
                             if (rs.next()) {
                                 hasPreviousBest = true;
@@ -812,7 +854,7 @@ public class DatabaseManager {
                     stmt.setInt(14, nkatu);
                     stmt.setString(15, rank != null && !rank.isBlank() ? rank.toUpperCase() : "D");
                     stmt.setInt(16, newStatus);
-                    stmt.setInt(17, rulesetId);
+                    stmt.setInt(17, effectiveMode);
                     stmt.setInt(18, timeElapsed);
                     stmt.setBoolean(19, isPerfect);
                     stmt.setString(20, checksum);
@@ -835,7 +877,7 @@ public class DatabaseManager {
                 String selectStatsSql = "SELECT * FROM stats WHERE id = ? AND mode = ? LIMIT 1 FOR UPDATE";
                 try (PreparedStatement stmt = conn.prepareStatement(selectStatsSql)) {
                     stmt.setInt(1, userId);
-                    stmt.setInt(2, rulesetId);
+                    stmt.setInt(2, effectiveMode);
                     try (ResultSet rs = stmt.executeQuery()) {
                         if (rs.next()) {
                             statsExists = true;
@@ -892,14 +934,14 @@ public class DatabaseManager {
                                     SELECT MAX(s.pp) AS pp
                                     FROM scores s
                                     JOIN maps m ON s.map_md5 = m.md5
-                                    WHERE s.userid = ? AND s.mode = ? AND m.status = 1 AND s.status = 2
+                                    WHERE s.userid = ? AND s.mode = ? AND m.status >= 1 AND s.status = 2
                                     GROUP BY s.map_md5
                                 ) best_scores
                             ) ranked
                             """;
                     try (PreparedStatement stmt = conn.prepareStatement(ppSql)) {
                         stmt.setInt(1, userId);
-                        stmt.setInt(2, rulesetId);
+                        stmt.setInt(2, effectiveMode);
                         try (ResultSet rs = stmt.executeQuery()) {
                             if (rs.next()) {
                                 double wpp = rs.getDouble("weighted_pp");
@@ -934,7 +976,7 @@ public class DatabaseManager {
                         stmt.setInt(12, s);
                         stmt.setInt(13, a);
                         stmt.setInt(14, userId);
-                        stmt.setInt(15, rulesetId);
+                        stmt.setInt(15, effectiveMode);
                         stmt.executeUpdate();
                     }
                 } else {
@@ -946,7 +988,7 @@ public class DatabaseManager {
                             """;
                     try (PreparedStatement stmt = conn.prepareStatement(insertStatsSql)) {
                         stmt.setInt(1, userId);
-                        stmt.setInt(2, rulesetId);
+                        stmt.setInt(2, effectiveMode);
                         stmt.setLong(3, tscore);
                         stmt.setLong(4, rscore);
                         stmt.setInt(5, calculatedUserPp);
@@ -1025,6 +1067,7 @@ public class DatabaseManager {
                 if (beatmap != null) {
                     sc.mapId = beatmap.id;
                     sc.setId = beatmap.setId;
+                    sc.mapStatus = beatmap.status;
                     sc.artist = beatmap.artist;
                     sc.title = beatmap.title;
                     sc.version = beatmap.version;
@@ -1055,6 +1098,295 @@ public class DatabaseManager {
             logger.error("Failed to submit score for user {} on beatmap {}: {}", userId, beatmapId, e.getMessage(), e);
             return null;
         }
+    }
+
+    public static class RankingUserRecord {
+        public User user;
+        public UserStatistics stats;
+        public int globalRank;
+    }
+
+    public static class CountryRankingRecord {
+        public String code;
+        public long activeUsers;
+        public long playCount;
+        public long rankedScore;
+        public long performance;
+    }
+
+    public List<RankingUserRecord> findRankings(int mode, String type, String country, int page, int pageSize) {
+        StringBuilder sql = new StringBuilder("""
+                SELECT u.id AS user_id, u.name AS user_name, u.safe_name, u.country AS user_country,
+                       u.donor_end, u.creation_time, u.latest_activity, u.custom_banner, u.priv,
+                       s.tscore, s.rscore, s.pp, s.plays, s.playtime, s.acc, s.max_combo, s.total_hits,
+                       s.xh_count, s.x_count, s.sh_count, s.s_count, s.a_count
+                FROM stats s
+                JOIN users u ON u.id = s.id
+                WHERE s.mode = ? AND (u.priv & 1) = 1 AND (s.plays > 0 OR s.pp > 0 OR s.tscore > 0)
+                """);
+
+        boolean hasCountry = country != null && !country.isBlank();
+        if (hasCountry) {
+            sql.append(" AND UPPER(u.country) = UPPER(?) ");
+        }
+
+        if ("score".equalsIgnoreCase(type) || "ranked_score".equalsIgnoreCase(type)) {
+            sql.append(" ORDER BY s.rscore DESC, s.tscore DESC ");
+        } else if ("all".equalsIgnoreCase(type) || "total_score".equalsIgnoreCase(type)) {
+            sql.append(" ORDER BY s.tscore DESC, s.rscore DESC ");
+        } else {
+            sql.append(" ORDER BY s.pp DESC, s.rscore DESC ");
+        }
+
+        sql.append(" LIMIT ? OFFSET ? ");
+
+        int limit = Math.min(Math.max(pageSize, 1), 100);
+        int offset = Math.max((page - 1) * limit, 0);
+
+        List<RankingUserRecord> list = new ArrayList<>();
+        try (Connection conn = getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql.toString())) {
+            int p = 1;
+            stmt.setInt(p++, mode);
+            if (hasCountry) {
+                stmt.setString(p++, country.trim());
+            }
+            stmt.setInt(p++, limit);
+            stmt.setInt(p++, offset);
+
+            try (ResultSet rs = stmt.executeQuery()) {
+                int index = 0;
+                while (rs.next()) {
+                    RankingUserRecord rec = new RankingUserRecord();
+                    User u = new User();
+                    u.id = rs.getInt("user_id");
+                    u.name = rs.getString("user_name");
+                    u.safeName = rs.getString("safe_name");
+                    u.country = rs.getString("user_country");
+                    u.donorEnd = rs.getInt("donor_end");
+                    u.creationTime = rs.getInt("creation_time");
+                    u.latestActivity = rs.getInt("latest_activity");
+                    u.customBanner = rs.getString("custom_banner");
+                    u.privileges = rs.getInt("priv");
+
+                    UserStatistics st = new UserStatistics();
+                    st.id = u.id;
+                    st.mode = mode;
+                    st.totalScore = rs.getLong("tscore");
+                    st.rankedScore = rs.getLong("rscore");
+                    st.pp = rs.getInt("pp");
+                    st.plays = rs.getInt("plays");
+                    st.playTime = rs.getInt("playtime");
+                    st.accuracy = rs.getFloat("acc");
+                    st.maxCombo = rs.getInt("max_combo");
+                    st.totalHits = rs.getInt("total_hits");
+                    st.xhCount = rs.getInt("xh_count");
+                    st.xCount = rs.getInt("x_count");
+                    st.shCount = rs.getInt("sh_count");
+                    st.sCount = rs.getInt("s_count");
+                    st.aCount = rs.getInt("a_count");
+                    st.level = calculateLevel(st.totalScore);
+                    st.levelProgress = calculateLevelProgress(st.totalScore);
+
+                    rec.user = u;
+                    rec.stats = st;
+                    rec.globalRank = offset + index + 1;
+                    st.globalRank = rec.globalRank;
+                    list.add(rec);
+                    index++;
+                }
+            }
+        } catch (SQLException e) {
+            logger.error("Error finding rankings for mode {}: {}", mode, e.getMessage());
+        }
+        return list;
+    }
+
+    public int countRankings(int mode, String country) {
+        StringBuilder sql = new StringBuilder("""
+                SELECT COUNT(*)
+                FROM stats s
+                JOIN users u ON u.id = s.id
+                WHERE s.mode = ? AND (u.priv & 1) = 1 AND (s.plays > 0 OR s.pp > 0 OR s.tscore > 0)
+                """);
+        boolean hasCountry = country != null && !country.isBlank();
+        if (hasCountry) {
+            sql.append(" AND UPPER(u.country) = UPPER(?) ");
+        }
+
+        try (Connection conn = getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql.toString())) {
+            stmt.setInt(1, mode);
+            if (hasCountry) {
+                stmt.setString(2, country.trim());
+            }
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getInt(1);
+                }
+            }
+        } catch (SQLException e) {
+            logger.error("Error counting rankings for mode {}: {}", mode, e.getMessage());
+        }
+        return 0;
+    }
+
+    public List<CountryRankingRecord> findCountryRankings(int mode, int page, int pageSize) {
+        String sql = """
+                SELECT UPPER(u.country) AS code,
+                       COUNT(DISTINCT u.id) AS active_users,
+                       COALESCE(SUM(s.plays), 0) AS play_count,
+                       COALESCE(SUM(s.rscore), 0) AS ranked_score,
+                       COALESCE(SUM(s.pp), 0) AS performance
+                FROM users u
+                JOIN stats s ON s.id = u.id AND s.mode = ?
+                WHERE (u.priv & 1) = 1 AND (s.plays > 0 OR s.pp > 0 OR s.tscore > 0)
+                  AND u.country IS NOT NULL AND u.country != '' AND u.country != 'XX'
+                GROUP BY UPPER(u.country)
+                ORDER BY performance DESC, ranked_score DESC
+                LIMIT ? OFFSET ?
+                """;
+
+        int limit = Math.min(Math.max(pageSize, 1), 100);
+        int offset = Math.max((page - 1) * limit, 0);
+
+        List<CountryRankingRecord> list = new ArrayList<>();
+        try (Connection conn = getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setInt(1, mode);
+            stmt.setInt(2, limit);
+            stmt.setInt(3, offset);
+
+            try (ResultSet rs = stmt.executeQuery()) {
+                while (rs.next()) {
+                    CountryRankingRecord c = new CountryRankingRecord();
+                    c.code = rs.getString("code");
+                    c.activeUsers = rs.getLong("active_users");
+                    c.playCount = rs.getLong("play_count");
+                    c.rankedScore = rs.getLong("ranked_score");
+                    c.performance = rs.getLong("performance");
+                    list.add(c);
+                }
+            }
+        } catch (SQLException e) {
+            logger.error("Error finding country rankings for mode {}: {}", mode, e.getMessage());
+        }
+        return list;
+    }
+
+    public int countCountryRankings(int mode) {
+        String sql = """
+                SELECT COUNT(DISTINCT UPPER(u.country))
+                FROM users u
+                JOIN stats s ON s.id = u.id AND s.mode = ?
+                WHERE (u.priv & 1) = 1 AND (s.plays > 0 OR s.pp > 0 OR s.tscore > 0)
+                  AND u.country IS NOT NULL AND u.country != '' AND u.country != 'XX'
+                """;
+        try (Connection conn = getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setInt(1, mode);
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getInt(1);
+                }
+            }
+        } catch (SQLException e) {
+            logger.error("Error counting country rankings for mode {}: {}", mode, e.getMessage());
+        }
+        return 0;
+    }
+
+    public List<Integer> findBeatmapsetIdsLocal(String query, int mode, int status, int limit, int offset) {
+        StringBuilder sql = new StringBuilder("""
+                SELECT set_id
+                FROM maps
+                WHERE set_id > 0
+                """);
+        boolean hasQuery = query != null && !query.isBlank();
+        if (hasQuery) {
+            sql.append(" AND (artist LIKE ? OR title LIKE ? OR creator LIKE ? OR version LIKE ?) ");
+        }
+        if (mode >= 0) {
+            sql.append(" AND mode = ? ");
+        }
+        if (status != Integer.MIN_VALUE && status != -999) {
+            sql.append(" AND status = ? ");
+        }
+        sql.append(" GROUP BY set_id ORDER BY MAX(last_update) DESC LIMIT ? OFFSET ? ");
+
+        List<Integer> list = new ArrayList<>();
+        try (Connection conn = getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql.toString())) {
+            int p = 1;
+            if (hasQuery) {
+                String pattern = "%" + query.trim() + "%";
+                stmt.setString(p++, pattern);
+                stmt.setString(p++, pattern);
+                stmt.setString(p++, pattern);
+                stmt.setString(p++, pattern);
+            }
+            if (mode >= 0) {
+                stmt.setInt(p++, mode);
+            }
+            if (status != Integer.MIN_VALUE && status != -999) {
+                stmt.setInt(p++, status);
+            }
+            stmt.setInt(p++, Math.min(Math.max(limit, 1), 100));
+            stmt.setInt(p++, Math.max(offset, 0));
+
+            try (ResultSet rs = stmt.executeQuery()) {
+                while (rs.next()) {
+                    list.add(rs.getInt("set_id"));
+                }
+            }
+        } catch (SQLException e) {
+            logger.error("Error searching local beatmapsets: {}", e.getMessage());
+        }
+        return list;
+    }
+
+    public int countBeatmapsetsLocal(String query, int mode, int status) {
+        StringBuilder sql = new StringBuilder("""
+                SELECT COUNT(DISTINCT set_id)
+                FROM maps
+                WHERE set_id > 0
+                """);
+        boolean hasQuery = query != null && !query.isBlank();
+        if (hasQuery) {
+            sql.append(" AND (artist LIKE ? OR title LIKE ? OR creator LIKE ? OR version LIKE ?) ");
+        }
+        if (mode >= 0) {
+            sql.append(" AND mode = ? ");
+        }
+        if (status != Integer.MIN_VALUE && status != -999) {
+            sql.append(" AND status = ? ");
+        }
+
+        try (Connection conn = getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql.toString())) {
+            int p = 1;
+            if (hasQuery) {
+                String pattern = "%" + query.trim() + "%";
+                stmt.setString(p++, pattern);
+                stmt.setString(p++, pattern);
+                stmt.setString(p++, pattern);
+                stmt.setString(p++, pattern);
+            }
+            if (mode >= 0) {
+                stmt.setInt(p++, mode);
+            }
+            if (status != Integer.MIN_VALUE && status != -999) {
+                stmt.setInt(p++, status);
+            }
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getInt(1);
+                }
+            }
+        } catch (SQLException e) {
+            logger.error("Error counting local beatmapsets: {}", e.getMessage());
+        }
+        return 0;
     }
 
     public void close() {

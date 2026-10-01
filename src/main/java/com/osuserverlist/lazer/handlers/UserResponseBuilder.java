@@ -210,34 +210,46 @@ public class UserResponseBuilder {
         statistics.put("perfect", sc.ngeki);
         statistics.put("good", sc.nkatu);
         map.put("statistics", statistics);
-        map.put("maximum_statistics", Collections.emptyMap());
+
+        Map<String, Object> maxStats = new LinkedHashMap<>();
+        int mapMax = sc.mapMaxCombo > 0 ? sc.mapMaxCombo : (sc.n300 + sc.n100 + sc.n50 + sc.nmiss);
+        if (mapMax > 0) {
+            maxStats.put("great", mapMax);
+        }
+        map.put("maximum_statistics", maxStats);
 
         String endedAt = ISO_FORMATTER.format(Instant.ofEpochSecond(sc.playTimeEpochSec));
         map.put("started_at", endedAt);
         map.put("ended_at", endedAt);
         map.put("created_at", endedAt);
         map.put("has_replay", false);
-        map.put("ranked", true);
+        boolean isRanked = sc.mapStatus > 0;
+        map.put("ranked", isRanked);
+        map.put("preserve", sc.status == 2 || sc.pp > 0);
+        map.put("processed", true);
 
         Map<String, Object> bm = new LinkedHashMap<>();
         bm.put("id", sc.mapId);
         bm.put("beatmapset_id", sc.setId);
         bm.put("version", sc.version);
         bm.put("difficulty_rating", (double) sc.diff);
-        bm.put("status", "ranked");
+        bm.put("status", BeatmapHandler.statusToString(sc.mapStatus));
         bm.put("total_length", sc.totalLength);
         bm.put("bpm", (double) sc.bpm);
         bm.put("cs", (double) sc.cs);
         bm.put("ar", (double) sc.ar);
         bm.put("drain", (double) sc.hp);
         bm.put("accuracy", (double) sc.od);
+        bm.put("max_combo", sc.mapMaxCombo > 0 ? sc.mapMaxCombo : (mapMax > 0 ? mapMax : null));
+        bm.put("checksum", sc.mapMd5 != null ? sc.mapMd5 : "");
+        bm.put("mode_int", sc.mode % 4);
 
         Map<String, Object> bms = new LinkedHashMap<>();
         bms.put("id", sc.setId);
         bms.put("artist", sc.artist);
         bms.put("title", sc.title);
         bms.put("creator", sc.creator);
-        bms.put("status", "ranked");
+        bms.put("status", BeatmapHandler.statusToString(sc.mapStatus));
 
         Map<String, Object> covers = new LinkedHashMap<>();
         String baseCover = "https://assets.ppy.sh/beatmaps/" + sc.setId + "/covers/";
@@ -287,10 +299,15 @@ public class UserResponseBuilder {
 
     public static int parseMode(String ruleset) {
         if (ruleset == null) return 0;
-        return switch (ruleset.toLowerCase()) {
+        return switch (ruleset.toLowerCase().trim()) {
             case "taiko" -> 1;
             case "fruits", "catch" -> 2;
             case "mania" -> 3;
+            case "rx", "relax", "osu!rx", "rx!std" -> 4;
+            case "rx!taiko", "taiko!rx" -> 5;
+            case "rx!catch", "rx!fruits", "catch!rx" -> 6;
+            case "rx!mania", "mania!rx" -> 7;
+            case "ap", "autopilot", "osu!ap", "ap!std" -> 8;
             default -> 0;
         };
     }
@@ -300,15 +317,34 @@ public class UserResponseBuilder {
             case 1 -> "taiko";
             case 2 -> "fruits";
             case 3 -> "mania";
+            case 4 -> "rx";
+            case 5 -> "rx!taiko";
+            case 6 -> "rx!fruits";
+            case 7 -> "rx!mania";
+            case 8 -> "ap";
             default -> "osu";
         };
+    }
+
+    public static int getEffectiveMode(int baseRulesetId, int modsBitmask) {
+        int modeVn = baseRulesetId % 4;
+        boolean hasAutopilot = (modsBitmask & 8192) != 0; // AP / Relax2
+        boolean hasRelax = (modsBitmask & 128) != 0; // RX / Relax
+
+        if (hasAutopilot && modeVn == 0) {
+            return 8; // AP!std
+        } else if (hasRelax) {
+            return modeVn + 4; // 4: rx!std, 5: rx!taiko, 6: rx!catch, 7: rx!mania
+        }
+        return modeVn;
     }
 
     public static long convertStandardisedToClassic(int rulesetId, long standardisedScore, int objectCount) {
         if (objectCount <= 0) {
             objectCount = 100;
         }
-        return switch (rulesetId) {
+        int baseMode = rulesetId % 4;
+        return switch (baseMode) {
             case 0 -> Math.round((Math.pow(objectCount, 2) * 32.57 + 100000.0) * (double) standardisedScore / 1000000.0);
             case 1 -> Math.round(((double) objectCount * 1109.0 + 100000.0) * (double) standardisedScore / 1000000.0);
             case 2 -> Math.round(Math.pow((double) standardisedScore / 1000000.0 * (double) objectCount, 2) * 21.62 + (double) standardisedScore / 10.0);
@@ -365,6 +401,53 @@ public class UserResponseBuilder {
         return bitmask;
     }
 
+    public static boolean isRankedMod(String acronym, int rulesetId) {
+        if (acronym == null || acronym.isBlank()) return true;
+        String ac = acronym.toUpperCase().trim();
+        int baseMode = rulesetId % 4;
+        return switch (ac) {
+            case "NM", "NF", "EZ", "TD", "HD", "HR", "SD", "DT", "HT", "NC", "FL", "SO", "PF", "CL", "RX", "AP" -> true;
+            case "FI", "1K", "2K", "3K", "4K", "5K", "6K", "7K", "8K", "9K" -> baseMode == 3;
+            case "MR" -> baseMode == 3;
+            default -> false;
+        };
+    }
+
+    public static boolean isScoreRankedForPp(java.util.List<?> modsList, int modsBitmask, int rulesetId) {
+        // Genuinely unranked mods: AT(2048), RD(2097152), CN(4194304), TP(8388608), SV2(536870912)
+        int unrankedBitmask = 2048 | 2097152 | 4194304 | 8388608 | 536870912;
+        if ((modsBitmask & unrankedBitmask) != 0) {
+            return false;
+        }
+
+        int baseMode = rulesetId % 4;
+        // Mirror is only ranked in mania
+        if ((modsBitmask & 1073741824) != 0 && baseMode != 3) {
+            return false;
+        }
+
+        if (modsList != null && !modsList.isEmpty()) {
+            for (Object item : modsList) {
+                String acronym = "";
+                if (item instanceof Map<?, ?> m) {
+                    Object ac = m.get("acronym");
+                    if (ac != null) acronym = ac.toString();
+                    Object rankedObj = m.get("ranked");
+                    if (rankedObj instanceof Boolean b && !b) {
+                        return false;
+                    }
+                } else if (item instanceof String s) {
+                    acronym = s;
+                }
+                if (!isRankedMod(acronym, rulesetId)) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
     public static String getAvatarUrl(int userId, ServerConfig config) {
         boolean isLocal = config.domain.startsWith("localhost") || config.domain.startsWith("127.0.0.1");
         return isLocal
@@ -386,5 +469,73 @@ public class UserResponseBuilder {
             }
         }
         return "https://assets.ppy.sh/user-profile-covers/default.jpg";
+    }
+
+    public static Map<String, Object> formatRankingUser(User user, UserStatistics stats, int mode, int rank, ServerConfig config) {
+        Map<String, Object> item = new LinkedHashMap<>();
+
+        Map<String, Object> userObj = new LinkedHashMap<>();
+        userObj.put("id", user.id);
+        userObj.put("username", user.name);
+        String countryCode = (user.country != null && !user.country.isBlank()) ? user.country.toUpperCase() : "XX";
+        userObj.put("country_code", countryCode);
+
+        Map<String, Object> country = new LinkedHashMap<>();
+        country.put("code", countryCode);
+        country.put("name", countryCode);
+        userObj.put("country", country);
+
+        String avatarUrl = getAvatarUrl(user.id, config);
+        userObj.put("avatar_url", avatarUrl);
+        userObj.put("custom_avatar_url", avatarUrl);
+
+        String coverUrl = getCoverUrl(user.customBanner, config);
+        Map<String, Object> cover = new LinkedHashMap<>();
+        cover.put("custom_url", coverUrl);
+        cover.put("url", coverUrl);
+        cover.put("id", null);
+        userObj.put("cover", cover);
+        userObj.put("cover_url", coverUrl);
+
+        boolean isSupporter = user.donorEnd > (System.currentTimeMillis() / 1000);
+        userObj.put("is_active", true);
+        userObj.put("is_bot", false);
+        userObj.put("is_deleted", false);
+        userObj.put("is_online", true);
+        userObj.put("is_supporter", isSupporter);
+        userObj.put("pm_friends_only", false);
+        userObj.put("profile_colour", null);
+        userObj.put("default_group", "default");
+
+        item.put("user", userObj);
+
+        item.put("global_rank", rank);
+        item.put("country_rank", stats.countryRank != null && stats.countryRank > 0 ? stats.countryRank : rank);
+        item.put("pp", stats.pp);
+        item.put("ranked_score", stats.rankedScore);
+        item.put("total_score", stats.totalScore);
+        double hitAccuracy = stats.accuracy <= 1.0f ? (stats.accuracy * 100.0) : stats.accuracy;
+        item.put("hit_accuracy", hitAccuracy);
+        item.put("play_count", stats.plays);
+        item.put("play_time", stats.playTime);
+        item.put("total_hits", stats.totalHits);
+        item.put("maximum_combo", stats.maxCombo);
+        item.put("replays_watched_by_others", stats.replayViews);
+        item.put("is_ranked", true);
+
+        Map<String, Object> levelMap = new LinkedHashMap<>();
+        levelMap.put("current", stats.level);
+        levelMap.put("progress", (int) Math.round(stats.levelProgress));
+        item.put("level", levelMap);
+
+        Map<String, Object> grades = new LinkedHashMap<>();
+        grades.put("ss", stats.xCount);
+        grades.put("ssh", stats.xhCount);
+        grades.put("s", stats.sCount);
+        grades.put("sh", stats.shCount);
+        grades.put("a", stats.aCount);
+        item.put("grade_counts", grades);
+
+        return item;
     }
 }
