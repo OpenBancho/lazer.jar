@@ -49,6 +49,8 @@ dependencies {
 
     implementation("redis.clients:jedis:$jedisVersion")
     implementation("io.github.7mochi:osu-native-jar:0.0.9")
+    implementation("org.msgpack:msgpack-core:0.9.8")
+    implementation("org.msgpack:jackson-dataformat-msgpack:0.9.8")
 }
 
 tasks.withType<JavaCompile> {
@@ -57,4 +59,19 @@ tasks.withType<JavaCompile> {
 
 tasks.shadowJar {
     mergeServiceFiles()
+    archiveFileName.set("lazer-jar-1.0.0-all.jar")
+    doLast {
+        val src = archiveFile.get().asFile
+        val destDir = src.parentFile
+        try {
+            src.copyTo(File(destDir, "lazer-server-1.0.0-all.jar"), overwrite = true)
+        } catch (e: Exception) {
+            println("Notice: could not copy to lazer-server-1.0.0-all.jar: ${e.message}")
+        }
+        try {
+            src.copyTo(File(destDir, "lazer.jar"), overwrite = true)
+        } catch (e: Exception) {
+            println("Notice: could not copy to lazer.jar: ${e.message}")
+        }
+    }
 }

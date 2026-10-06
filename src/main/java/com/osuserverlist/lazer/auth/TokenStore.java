@@ -68,6 +68,10 @@ public class TokenStore {
         }
     }
 
+    public JedisPool getJedisPool() {
+        return jedisPool;
+    }
+
     public TokenPair issue(int userId, String username, int privileges, String scope) {
         String accessToken = generateRandomString(32);
         String refreshToken = generateRandomString(32);

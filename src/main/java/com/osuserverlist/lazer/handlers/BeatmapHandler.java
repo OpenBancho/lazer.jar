@@ -286,6 +286,46 @@ public class BeatmapHandler {
         ctx.status(404).json(Map.of("error", "Beatmapset not found"));
     }
 
+    public void handleGetBeatmaps(@NotNull Context ctx) {
+        List<String> ids = ctx.queryParams("ids[]");
+        if (ids.isEmpty()) {
+            ids = ctx.queryParams("ids");
+        }
+        if (ids.isEmpty()) {
+            String idParam = ctx.queryParam("id");
+            if (idParam != null && !idParam.isBlank()) {
+                ids = List.of(idParam);
+            }
+        }
+
+        List<Map<String, Object>> beatmapsList = new ArrayList<>();
+        if (!ids.isEmpty()) {
+            for (String s : ids) {
+                try {
+                    int bId = Integer.parseInt(s.trim());
+                    BeatmapRecord bm = databaseManager.findBeatmapById(bId);
+                    if (bm != null) {
+                        beatmapsList.add(formatSingleBeatmap(bm));
+                    }
+                } catch (NumberFormatException ignored) {}
+            }
+        }
+
+        String checksum = ctx.queryParam("checksum");
+        if (checksum != null && !checksum.isBlank()) {
+            BeatmapRecord bm = databaseManager.findBeatmapByMd5(checksum.trim());
+            if (bm != null) {
+                beatmapsList.add(formatSingleBeatmap(bm));
+            }
+        }
+
+        Map<String, Object> resp = new LinkedHashMap<>();
+        resp.put("beatmaps", beatmapsList);
+        resp.put("cursor", null);
+        resp.put("cursor_string", null);
+        ctx.status(200).json(resp);
+    }
+
     public void handleGetBeatmap(@NotNull Context ctx) {
         int beatmapId;
         try {

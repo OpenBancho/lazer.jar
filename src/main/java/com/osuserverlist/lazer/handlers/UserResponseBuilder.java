@@ -14,14 +14,18 @@ public class UserResponseBuilder {
     private static final DateTimeFormatter ISO_FORMATTER = DateTimeFormatter.ISO_INSTANT;
 
     public static Map<String, Object> buildUserResponse(User user, UserStatistics stats, int mode, ServerConfig config) {
-        return buildUserResponse(user, stats, mode, config, 0, new com.osuserverlist.lazer.database.DatabaseManager.ScoreCounts());
+        return buildUserResponse(user, stats, mode, config, 0, new com.osuserverlist.lazer.database.DatabaseManager.ScoreCounts(), false);
     }
 
     public static Map<String, Object> buildUserResponse(User user, UserStatistics stats, int mode, ServerConfig config, int followerCount) {
-        return buildUserResponse(user, stats, mode, config, followerCount, new com.osuserverlist.lazer.database.DatabaseManager.ScoreCounts());
+        return buildUserResponse(user, stats, mode, config, followerCount, new com.osuserverlist.lazer.database.DatabaseManager.ScoreCounts(), false);
     }
 
     public static Map<String, Object> buildUserResponse(User user, UserStatistics stats, int mode, ServerConfig config, int followerCount, com.osuserverlist.lazer.database.DatabaseManager.ScoreCounts scoreCounts) {
+        return buildUserResponse(user, stats, mode, config, followerCount, scoreCounts, false);
+    }
+
+    public static Map<String, Object> buildUserResponse(User user, UserStatistics stats, int mode, ServerConfig config, int followerCount, com.osuserverlist.lazer.database.DatabaseManager.ScoreCounts scoreCounts, boolean isOnline) {
         Map<String, Object> root = new LinkedHashMap<>();
 
         root.put("id", user.id);
@@ -53,7 +57,7 @@ public class UserResponseBuilder {
         root.put("is_active", true);
         root.put("is_bot", false);
         root.put("is_deleted", false);
-        root.put("is_online", true);
+        root.put("is_online", isOnline);
         root.put("is_supporter", isSupporter);
         root.put("support_level", isSupporter ? 1 : 0);
         root.put("is_admin", isAdmin);
@@ -64,8 +68,15 @@ public class UserResponseBuilder {
         String joinDate = ISO_FORMATTER.format(Instant.ofEpochSecond(creationSec));
         root.put("join_date", joinDate);
 
-        long latestSec = user.latestActivity > 0 ? user.latestActivity : (System.currentTimeMillis() / 1000);
-        root.put("last_visit", ISO_FORMATTER.format(Instant.ofEpochSecond(latestSec)));
+        if (isOnline) {
+            root.put("last_visit", ISO_FORMATTER.format(Instant.now()));
+        } else if (user.latestActivity > 0) {
+            root.put("last_visit", ISO_FORMATTER.format(Instant.ofEpochSecond(user.latestActivity)));
+        } else if (user.creationTime > 0) {
+            root.put("last_visit", ISO_FORMATTER.format(Instant.ofEpochSecond(user.creationTime)));
+        } else {
+            root.put("last_visit", null);
+        }
 
         root.put("max_blocks", 50);
         root.put("max_friends", 250);
@@ -131,6 +142,17 @@ public class UserResponseBuilder {
         statsMap.put("grade_counts", grades);
 
         root.put("statistics", statsMap);
+
+        if (stats.globalRank != null && stats.globalRank > 0) {
+            Map<String, Object> globalRankObj = new LinkedHashMap<>();
+            globalRankObj.put("rank", stats.globalRank);
+            globalRankObj.put("ruleset_id", mode);
+            root.put("global_rank", globalRankObj);
+            root.put("rank", stats.globalRank);
+        } else {
+            root.put("global_rank", null);
+            root.put("rank", null);
+        }
 
         root.put("session_verification_method", null);
         root.put("score_processing_notice_url", "");

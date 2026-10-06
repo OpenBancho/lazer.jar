@@ -29,6 +29,7 @@ public class SoloScoreHandler {
     private final AuthService authService;
     private final DatabaseManager databaseManager;
     private final ServerConfig config;
+    private final com.osuserverlist.lazer.signalr.SpectatorHub spectatorHub;
 
     public static class ScoreTokenInfo {
         public final long id;
@@ -50,10 +51,12 @@ public class SoloScoreHandler {
 
     private final Map<Long, ScoreTokenInfo> scoreTokens = new ConcurrentHashMap<>();
 
-    public SoloScoreHandler(AuthService authService, DatabaseManager databaseManager, ServerConfig config) {
+    public SoloScoreHandler(AuthService authService, DatabaseManager databaseManager, ServerConfig config,
+                            com.osuserverlist.lazer.signalr.SpectatorHub spectatorHub) {
         this.authService = authService;
         this.databaseManager = databaseManager;
         this.config = config;
+        this.spectatorHub = spectatorHub;
     }
 
     private User authenticate(Context ctx) {
@@ -277,6 +280,10 @@ public class SoloScoreHandler {
         }
 
         ScoreRecord sc = submitResult.score;
+
+        if (spectatorHub != null) {
+            spectatorHub.notifyScoreProcessed(user.id, sc.id);
+        }
 
         // Response matches MultiplayerScore model in osu!(lazer)
         Map<String, Object> response = new LinkedHashMap<>();
