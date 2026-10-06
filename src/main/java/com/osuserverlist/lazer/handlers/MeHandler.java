@@ -60,7 +60,7 @@ public class MeHandler implements Handler {
 
         int followerCount = databaseManager.findFollowerCount(user.id);
         DatabaseManager.ScoreCounts scoreCounts = databaseManager.findScoreCounts(user.id, mode);
-        Map<String, Object> resp = UserResponseBuilder.buildUserResponse(user, stats, mode, config, followerCount, scoreCounts);
+        Map<String, Object> resp = UserResponseBuilder.buildUserResponse(user, stats, mode, config, followerCount, scoreCounts, true);
         ctx.status(200);
         ctx.contentType("application/json");
         ctx.json(resp);

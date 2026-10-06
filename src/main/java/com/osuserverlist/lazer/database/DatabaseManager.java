@@ -21,9 +21,18 @@ import java.util.List;
 public class DatabaseManager {
     private static final Logger logger = LoggerFactory.getLogger(DatabaseManager.class);
     private static final com.fasterxml.jackson.databind.ObjectMapper JSON = new com.fasterxml.jackson.databind.ObjectMapper();
-    private final java.net.http.HttpClient httpClient = java.net.http.HttpClient.newHttpClient();
+    private final java.net.http.HttpClient httpClient = java.net.http.HttpClient.newBuilder()
+            .connectTimeout(java.time.Duration.ofMillis(1500))
+            .build();
     private HikariDataSource dataSource;
     private ServerConfig config;
+
+    // Fast in-memory caches
+    private final java.util.Map<Integer, User> userIdCache = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.Map<String, User> userNameCache = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.Map<Integer, BeatmapRecord> beatmapIdCache = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.Map<String, BeatmapRecord> beatmapMd5Cache = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.Map<Integer, List<BeatmapRecord>> beatmapSetCache = new java.util.concurrent.ConcurrentHashMap<>();
 
     public void init(ServerConfig config) {
         this.config = config;
@@ -35,8 +44,11 @@ public class DatabaseManager {
         hikariConfig.setJdbcUrl(jdbcUrl);
         hikariConfig.setUsername(config.dbUser);
         hikariConfig.setPassword(config.dbPass);
-        hikariConfig.setMaximumPoolSize(10);
-        hikariConfig.setMinimumIdle(2);
+        hikariConfig.setMaximumPoolSize(30);
+        hikariConfig.setMinimumIdle(5);
+        hikariConfig.setConnectionTimeout(3000);
+        hikariConfig.setIdleTimeout(60000);
+        hikariConfig.setMaxLifetime(1800000);
         hikariConfig.setPoolName("LazerHikariPool");
 
         try {
@@ -72,15 +84,24 @@ public class DatabaseManager {
     }
 
     public User findUserByName(String name) {
+        if (name == null || name.isBlank()) return null;
+        String safeName = name.toLowerCase().replaceAll(" ", "_");
+        User cached = userNameCache.get(safeName);
+        if (cached != null) return cached;
+
         String sql = "SELECT * FROM users WHERE name = ? OR safe_name = ? LIMIT 1";
         try (Connection conn = getConnection();
              PreparedStatement stmt = conn.prepareStatement(sql)) {
-            String safeName = name.toLowerCase().replaceAll(" ", "_");
             stmt.setString(1, name);
             stmt.setString(2, safeName);
             try (ResultSet rs = stmt.executeQuery()) {
                 if (rs.next()) {
-                    return mapUser(rs);
+                    User u = mapUser(rs);
+                    if (u != null) {
+                        userIdCache.put(u.id, u);
+                        userNameCache.put(safeName, u);
+                    }
+                    return u;
                 }
             }
         } catch (SQLException e) {
@@ -90,19 +111,42 @@ public class DatabaseManager {
     }
 
     public User findUserById(int id) {
+        if (id <= 0) return null;
+        User cached = userIdCache.get(id);
+        if (cached != null) return cached;
+
         String sql = "SELECT * FROM users WHERE id = ? LIMIT 1";
         try (Connection conn = getConnection();
              PreparedStatement stmt = conn.prepareStatement(sql)) {
             stmt.setInt(1, id);
             try (ResultSet rs = stmt.executeQuery()) {
                 if (rs.next()) {
-                    return mapUser(rs);
+                    User u = mapUser(rs);
+                    if (u != null) {
+                        userIdCache.put(u.id, u);
+                        userNameCache.put(u.name.toLowerCase().replaceAll(" ", "_"), u);
+                    }
+                    return u;
                 }
             }
         } catch (SQLException e) {
             logger.error("Error finding user by id {}: {}", id, e.getMessage());
         }
         return null;
+    }
+
+    public void updateUserLatestActivity(int userId) {
+        if (userId <= 0) return;
+        long now = System.currentTimeMillis() / 1000;
+        String sql = "UPDATE users SET latest_activity = ? WHERE id = ?";
+        try (Connection conn = getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setLong(1, now);
+            stmt.setInt(2, userId);
+            stmt.executeUpdate();
+        } catch (SQLException e) {
+            logger.debug("Error updating latest_activity for user {}: {}", userId, e.getMessage());
+        }
     }
 
     public UserStatistics findUserStats(int userId, int mode) {
@@ -404,13 +448,21 @@ public class DatabaseManager {
 
     public BeatmapRecord findBeatmapById(int id) {
         if (id <= 0) return null;
+        BeatmapRecord cached = beatmapIdCache.get(id);
+        if (cached != null) return cached;
+
         String sql = "SELECT * FROM maps WHERE id = ? LIMIT 1";
         try (Connection conn = getConnection();
              PreparedStatement stmt = conn.prepareStatement(sql)) {
             stmt.setInt(1, id);
             try (ResultSet rs = stmt.executeQuery()) {
                 if (rs.next()) {
-                    return mapBeatmapRecord(rs);
+                    BeatmapRecord bm = mapBeatmapRecord(rs);
+                    if (bm != null) {
+                        beatmapIdCache.put(bm.id, bm);
+                        if (bm.md5 != null) beatmapMd5Cache.put(bm.md5, bm);
+                    }
+                    return bm;
                 }
             }
         } catch (SQLException e) {
@@ -421,13 +473,21 @@ public class DatabaseManager {
 
     public BeatmapRecord findBeatmapByMd5(String md5) {
         if (md5 == null || md5.isBlank()) return null;
+        BeatmapRecord cached = beatmapMd5Cache.get(md5);
+        if (cached != null) return cached;
+
         String sql = "SELECT * FROM maps WHERE md5 = ? LIMIT 1";
         try (Connection conn = getConnection();
              PreparedStatement stmt = conn.prepareStatement(sql)) {
             stmt.setString(1, md5);
             try (ResultSet rs = stmt.executeQuery()) {
                 if (rs.next()) {
-                    return mapBeatmapRecord(rs);
+                    BeatmapRecord bm = mapBeatmapRecord(rs);
+                    if (bm != null) {
+                        beatmapMd5Cache.put(bm.md5, bm);
+                        if (bm.id > 0) beatmapIdCache.put(bm.id, bm);
+                    }
+                    return bm;
                 }
             }
         } catch (SQLException e) {
@@ -438,6 +498,9 @@ public class DatabaseManager {
 
     public List<BeatmapRecord> findBeatmapsBySetId(int setId) {
         if (setId <= 0) return Collections.emptyList();
+        List<BeatmapRecord> cached = beatmapSetCache.get(setId);
+        if (cached != null && !cached.isEmpty()) return cached;
+
         String sql = "SELECT * FROM maps WHERE set_id = ? ORDER BY diff ASC";
         List<BeatmapRecord> list = new ArrayList<>();
         try (Connection conn = getConnection();
@@ -445,7 +508,10 @@ public class DatabaseManager {
             stmt.setInt(1, setId);
             try (ResultSet rs = stmt.executeQuery()) {
                 while (rs.next()) {
-                    list.add(mapBeatmapRecord(rs));
+                    BeatmapRecord bm = mapBeatmapRecord(rs);
+                    list.add(bm);
+                    beatmapIdCache.put(bm.id, bm);
+                    if (bm.md5 != null) beatmapMd5Cache.put(bm.md5, bm);
                 }
             }
         } catch (SQLException e) {
@@ -458,10 +524,16 @@ public class DatabaseManager {
                 stmt.setInt(1, setId);
                 try (ResultSet rs = stmt.executeQuery()) {
                     while (rs.next()) {
-                        list.add(mapBeatmapRecord(rs));
+                        BeatmapRecord bm = mapBeatmapRecord(rs);
+                        list.add(bm);
+                        beatmapIdCache.put(bm.id, bm);
+                        if (bm.md5 != null) beatmapMd5Cache.put(bm.md5, bm);
                     }
                 }
             } catch (SQLException ignored) {}
+        }
+        if (!list.isEmpty()) {
+            beatmapSetCache.put(setId, list);
         }
         return list;
     }
@@ -470,6 +542,7 @@ public class DatabaseManager {
         String apiKey = (config != null && config.osuApiKey != null && !config.osuApiKey.isBlank())
                 ? config.osuApiKey : "3f8616cb3488e3ed1cec4a8fd3501cebeb506ee5";
 
+        // Try fast mirror direct search / lookup first or official osu! API with 1.5s timeout
         String url = (id > 0)
                 ? "https://osu.ppy.sh/api/get_beatmaps?k=" + apiKey + "&b=" + id
                 : "https://osu.ppy.sh/api/get_beatmaps?k=" + apiKey + "&h=" + md5;
@@ -477,7 +550,7 @@ public class DatabaseManager {
         try {
             java.net.http.HttpRequest req = java.net.http.HttpRequest.newBuilder()
                     .uri(java.net.URI.create(url))
-                    .timeout(java.time.Duration.ofSeconds(6))
+                    .timeout(java.time.Duration.ofMillis(1500))
                     .GET()
                     .build();
             java.net.http.HttpResponse<String> resp = httpClient.send(req, java.net.http.HttpResponse.BodyHandlers.ofString());
@@ -489,7 +562,7 @@ public class DatabaseManager {
                 }
             }
         } catch (Exception e) {
-            logger.warn("Failed to fetch beatmap from osu! api (id={}, md5={}): {}", id, md5, e.getMessage());
+            logger.debug("Beatmap fetch timeout or unavailable (id={}, md5={}): {}", id, md5, e.getMessage());
         }
         return null;
     }
@@ -502,7 +575,7 @@ public class DatabaseManager {
         try {
             java.net.http.HttpRequest req = java.net.http.HttpRequest.newBuilder()
                     .uri(java.net.URI.create(url))
-                    .timeout(java.time.Duration.ofSeconds(8))
+                    .timeout(java.time.Duration.ofMillis(2000))
                     .GET()
                     .build();
             java.net.http.HttpResponse<String> resp = httpClient.send(req, java.net.http.HttpResponse.BodyHandlers.ofString());
@@ -515,7 +588,7 @@ public class DatabaseManager {
                 }
             }
         } catch (Exception e) {
-            logger.warn("Failed to fetch beatmapset from osu! api (setId={}): {}", setId, e.getMessage());
+            logger.debug("Beatmapset fetch timeout or unavailable (setId={}): {}", setId, e.getMessage());
         }
     }
 
@@ -588,13 +661,16 @@ public class DatabaseManager {
             bm.mode = mode;
             bm.bpm = bpm;
             bm.cs = cs;
-            bm.ar = ar;
             bm.od = od;
+            bm.ar = ar;
             bm.hp = hp;
             bm.diff = diff;
+
+            beatmapIdCache.put(bm.id, bm);
+            if (bm.md5 != null) beatmapMd5Cache.put(bm.md5, bm);
             return bm;
         } catch (Exception e) {
-            logger.warn("Error saving beatmap JSON: {}", e.getMessage());
+            logger.warn("Failed to parse and save beatmap JSON: {}", e.getMessage());
             return null;
         }
     }
@@ -1385,6 +1461,94 @@ public class DatabaseManager {
             }
         } catch (SQLException e) {
             logger.error("Error counting local beatmapsets: {}", e.getMessage());
+        }
+        return 0;
+    }
+
+    public List<User> searchUsers(String query, int limit, int offset) {
+        StringBuilder sql = new StringBuilder("SELECT * FROM users WHERE (priv & 1) = 1");
+        boolean hasQuery = query != null && !query.isBlank();
+        if (hasQuery) {
+            sql.append(" AND (name LIKE ? OR safe_name LIKE ?)");
+        }
+        sql.append(" ORDER BY latest_activity DESC, id ASC LIMIT ? OFFSET ?");
+
+        List<User> list = new ArrayList<>();
+        try (Connection conn = getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql.toString())) {
+            int p = 1;
+            if (hasQuery) {
+                String q = "%" + query.trim() + "%";
+                stmt.setString(p++, q);
+                stmt.setString(p++, q);
+            }
+            stmt.setInt(p++, Math.min(Math.max(limit, 1), 100));
+            stmt.setInt(p++, Math.max(offset, 0));
+            try (ResultSet rs = stmt.executeQuery()) {
+                while (rs.next()) {
+                    list.add(mapUser(rs));
+                }
+            }
+        } catch (SQLException e) {
+            logger.error("Error searching users with query '{}': {}", query, e.getMessage());
+        }
+        return list;
+    }
+
+    public int countSearchUsers(String query) {
+        StringBuilder sql = new StringBuilder("SELECT COUNT(*) FROM users WHERE (priv & 1) = 1");
+        boolean hasQuery = query != null && !query.isBlank();
+        if (hasQuery) {
+            sql.append(" AND (name LIKE ? OR safe_name LIKE ?)");
+        }
+        try (Connection conn = getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql.toString())) {
+            if (hasQuery) {
+                String q = "%" + query.trim() + "%";
+                stmt.setString(1, q);
+                stmt.setString(2, q);
+            }
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (rs.next()) return rs.getInt(1);
+            }
+        } catch (SQLException e) {
+            logger.error("Error counting search users: {}", e.getMessage());
+        }
+        return 0;
+    }
+
+    public int countUsers() {
+        String sql = "SELECT COUNT(*) FROM users WHERE (priv & 1) = 1";
+        try (Connection conn = getConnection();
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery(sql)) {
+            if (rs.next()) return rs.getInt(1);
+        } catch (SQLException e) {
+            logger.error("Error counting users: {}", e.getMessage());
+        }
+        return 0;
+    }
+
+    public int countBeatmapsets() {
+        String sql = "SELECT COUNT(DISTINCT set_id) FROM maps WHERE set_id > 0";
+        try (Connection conn = getConnection();
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery(sql)) {
+            if (rs.next()) return rs.getInt(1);
+        } catch (SQLException e) {
+            logger.error("Error counting beatmapsets: {}", e.getMessage());
+        }
+        return 0;
+    }
+
+    public int countScores() {
+        String sql = "SELECT COUNT(*) FROM scores";
+        try (Connection conn = getConnection();
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery(sql)) {
+            if (rs.next()) return rs.getInt(1);
+        } catch (SQLException e) {
+            logger.error("Error counting scores: {}", e.getMessage());
         }
         return 0;
     }
