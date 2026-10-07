@@ -131,6 +131,7 @@ public class MultiplayerRoomData {
         public Long endsAt = null; // epoch ms when room ends (or ended)
         public long createdAt = System.currentTimeMillis();
         public long lastActivity = System.currentTimeMillis();
+        public volatile boolean introSkipPassed = false;
 
         public Room(long roomId, int hostUserId) {
             this.roomId = roomId;
