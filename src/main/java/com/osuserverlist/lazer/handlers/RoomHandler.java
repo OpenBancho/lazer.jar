@@ -66,7 +66,7 @@ public class RoomHandler implements Handler {
         List<Room> rooms = multiplayerManager.getRooms(category, mode, status, userId);
         List<Map<String, Object>> resp = new ArrayList<>();
         for (Room r : rooms) {
-            resp.add(formatRoom(r, userId, true));
+            resp.add(formatRoom(r, userId, false));
         }
 
         ctx.status(200);
@@ -671,7 +671,14 @@ public class RoomHandler implements Handler {
         map.put("id", room.roomId);
         map.put("name", room.name);
         map.put("channel_id", room.channelId);
-        map.put("category", room.category);
+
+        // "realtime" is an internal-only category (it is what the osu!(lazer) multiplayer lounge
+        // filters by), but it is NOT part of the public API enum. osu.Game.Online.Rooms.RoomCategory
+        // only knows "normal"/"spotlight"/"featured_artist"/"daily_challenge" and is deserialised with
+        // SnakeCaseStringEnumConverter, which throws on unknown values. A single unparsable room makes
+        // the whole List<Room> response fail, so the lounge listing never reports results and spins forever.
+        // osu-web / g0v0-server expose realtime rooms as "normal" for exactly this reason.
+        map.put("category", toApiCategory(room.category));
 
         map.put("type", switch (room.settings.matchType) {
             case 0 -> "playlists";
@@ -680,9 +687,11 @@ public class RoomHandler implements Handler {
             default -> "head_to_head";
         });
 
+        // Same story as the category: osu.Game.Online.Rooms.RoomStatus only has "idle" and "playing".
+        // Whether a room has ended is derived by the client from "ends_at" (Room.HasEnded), never from
+        // this field, so closed rooms must still be reported as "idle".
         map.put("status", switch (room.state) {
             case WAITING_FOR_LOAD, PLAYING -> "playing";
-            case CLOSED -> "ended";
             default -> "idle";
         });
 
@@ -697,7 +706,7 @@ public class RoomHandler implements Handler {
         map.put("has_password", room.settings.password != null && !room.settings.password.isBlank());
         map.put("max_participants", room.settings.maxParticipants);
         map.put("participant_count", room.users.size());
-        map.put("duration", room.duration != null ? room.duration : 0);
+        map.put("duration", room.duration);
         map.put("max_attempts", room.maxAttempts);
 
         map.put("starts_at", ISO_FORMATTER.format(Instant.ofEpochMilli(room.startsAt)));
@@ -753,23 +762,22 @@ public class RoomHandler implements Handler {
         map.put("difficulty_range", room.getDifficultyRange());
         map.put("playlist_item_stats", room.getPlaylistItemStats());
 
-        // Current user score / attempts
-        if (currentUserId > 0) {
+        // Current user score / attempts (matching PlaylistAggregateScore in client and g0v0 behavior)
+        if (includePlaylist && currentUserId > 0) {
             RoomUserAttemptStats userAttempts = multiplayerManager.getUserRoomAttempts(room.roomId, currentUserId);
+            Map<String, Object> uScoreMap = new LinkedHashMap<>();
+            List<Map<String, Object>> attemptsList = new ArrayList<>();
             if (userAttempts != null) {
-                Map<String, Object> uScoreMap = new LinkedHashMap<>();
-                uScoreMap.put("id", (long) currentUserId);
-                uScoreMap.put("user_id", currentUserId);
-                uScoreMap.put("room_id", room.roomId);
-                uScoreMap.put("total_score", userAttempts.totalScore);
-                uScoreMap.put("total_attempts", userAttempts.attempts);
-                uScoreMap.put("accuracy", userAttempts.totalAccuracy);
-                uScoreMap.put("max_combo", userAttempts.maxCombo);
-                uScoreMap.put("pp", (double) userAttempts.totalPp);
-                map.put("current_user_score", uScoreMap);
-            } else {
-                map.put("current_user_score", null);
+                for (PlaylistItem item : room.playlist) {
+                    Map<String, Object> itAttempt = new LinkedHashMap<>();
+                    itAttempt.put("id", (int) item.id);
+                    itAttempt.put("attempts", userAttempts.attempts);
+                    itAttempt.put("passed", true);
+                    attemptsList.add(itAttempt);
+                }
             }
+            uScoreMap.put("playlist_item_attempts", attemptsList);
+            map.put("current_user_score", uScoreMap);
         } else {
             map.put("current_user_score", null);
         }
@@ -791,14 +799,55 @@ public class RoomHandler implements Handler {
         map.put("freestyle", item.freestyle);
 
         BeatmapRecord br = databaseManager.findBeatmapById(item.beatmapId);
+        if (br == null && item.beatmapChecksum != null && !item.beatmapChecksum.isBlank()) {
+            br = databaseManager.findBeatmapByMd5(item.beatmapChecksum);
+        }
         if (br != null) {
             map.put("beatmap", formatBeatmap(br));
             map.put("beatmap_checksum", br.md5 != null ? br.md5 : "");
         } else {
-            map.put("beatmap_checksum", item.beatmapChecksum);
+            map.put("beatmap", formatFallbackBeatmap(item));
+            map.put("beatmap_checksum", item.beatmapChecksum != null ? item.beatmapChecksum : "");
         }
 
         return map;
+    }
+
+    private Map<String, Object> formatFallbackBeatmap(PlaylistItem item) {
+        Map<String, Object> bm = new LinkedHashMap<>();
+        int id = item.beatmapId > 0 ? item.beatmapId : 1;
+        bm.put("id", id);
+        bm.put("beatmapset_id", id);
+        bm.put("version", "Normal");
+        bm.put("difficulty_rating", item.starRating > 0 ? item.starRating : 1.0);
+        bm.put("status", "ranked");
+        bm.put("total_length", 120);
+        bm.put("bpm", 120.0);
+        bm.put("cs", 4.0);
+        bm.put("ar", 8.0);
+        bm.put("drain", 5.0);
+        bm.put("accuracy", 7.0);
+        bm.put("max_combo", 500);
+        bm.put("checksum", item.beatmapChecksum != null ? item.beatmapChecksum : "");
+        bm.put("mode_int", item.rulesetId % 4);
+
+        Map<String, Object> bms = new LinkedHashMap<>();
+        bms.put("id", id);
+        bms.put("artist", "Unknown Artist");
+        bms.put("title", "Multiplayer Map " + id);
+        bms.put("creator", "Unknown");
+        bms.put("status", "ranked");
+
+        Map<String, Object> covers = new LinkedHashMap<>();
+        String baseCover = "https://assets.ppy.sh/beatmaps/" + id + "/covers/";
+        covers.put("cover", baseCover + "cover.jpg");
+        covers.put("card", baseCover + "card.jpg");
+        covers.put("list", baseCover + "list.jpg");
+        covers.put("slimcover", baseCover + "slimcover.jpg");
+        bms.put("covers", covers);
+
+        bm.put("beatmapset", bms);
+        return bm;
     }
 
     private Map<String, Object> formatBeatmap(BeatmapRecord br) {
@@ -868,6 +917,16 @@ public class RoomHandler implements Handler {
             case "all_players_round_robin", "allplayersroundrobin" -> 2;
             default -> 0; // HostOnly
         };
+    }
+
+    /**
+     * Mirrors g0v0-server / osu-web: the internal "realtime" category (used by the osu!(lazer)
+     * multiplayer lounge for filtering) is never returned through the API as-is, because the client's
+     * {@code RoomCategory} enum does not contain it. Any other category is passed through unchanged.
+     */
+    public static String toApiCategory(String category) {
+        if (category == null || category.isBlank()) return "normal";
+        return "realtime".equalsIgnoreCase(category.trim()) ? "normal" : category;
     }
 
     private static long parseLongSafe(String str) {

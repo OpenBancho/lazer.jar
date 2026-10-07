@@ -141,9 +141,10 @@ public class MultiplayerManager {
             }
             // Filter status
             if (status != null && !status.isBlank() && !status.equalsIgnoreCase("all")) {
+                // Only "idle"/"playing" are valid API values (see RoomHandler.formatRoom / the client's
+                // RoomStatus enum). Ended rooms are described by ends_at, not by a dedicated status.
                 String roomStatusStr = switch (room.state) {
                     case WAITING_FOR_LOAD, PLAYING -> "playing";
-                    case CLOSED -> "ended";
                     default -> "idle";
                 };
                 if (!roomStatusStr.equalsIgnoreCase(status)) {

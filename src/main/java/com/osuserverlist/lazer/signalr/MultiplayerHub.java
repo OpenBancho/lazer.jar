@@ -410,6 +410,7 @@ public class MultiplayerHub {
                         room.state = RoomState.PLAYING;
                         broadcastToRoom(room, "RoomStateChanged", 1, packer -> packer.packInt(RoomState.PLAYING.value));
                         broadcastToRoom(room, "GameplayStarted", 0, null);
+                        checkVoteToSkipIntro(room);
                     }
                 }
 
@@ -562,6 +563,7 @@ public class MultiplayerHub {
                         packer.packInt(session.userId);
                         packer.packBoolean(true);
                     });
+                    checkVoteToSkipIntro(room);
                     return;
                 }
             }
@@ -739,7 +741,9 @@ public class MultiplayerHub {
                     sendVoidCompletion(session, invocationId);
                 }
 
+                room.introSkipPassed = false;
                 for (RoomUser u : room.users.values()) {
+                    u.votedToSkipIntro = false;
                     if (u.state != UserState.SPECTATING) {
                         u.state = UserState.WAITING_FOR_LOAD;
                         broadcastToRoom(room, "UserStateChanged", 2, packer -> {
@@ -961,6 +965,43 @@ public class MultiplayerHub {
             if (room.hostUserId > 0) {
                 broadcastToRoom(room, "HostChanged", 1, packer -> packer.packInt(room.hostUserId));
             }
+            if (room.state == RoomState.PLAYING) {
+                checkVoteToSkipIntro(room);
+            }
+        }
+    }
+
+    private void checkVoteToSkipIntro(Room room) {
+        if (room == null || room.introSkipPassed) return;
+        if (room.settings != null && room.settings.autoSkip) {
+            room.introSkipPassed = true;
+            broadcastToRoom(room, "VoteToSkipIntroPassed", 0, null);
+            return;
+        }
+        int countTotal = 0;
+        int countSkipped = 0;
+        for (RoomUser u : room.users.values()) {
+            if (u.state == UserState.PLAYING || u.state == UserState.READY_FOR_GAMEPLAY || u.state == UserState.LOADED) {
+                countTotal++;
+                if (u.votedToSkipIntro) {
+                    countSkipped++;
+                }
+            }
+        }
+        if (countTotal == 0) {
+            for (RoomUser u : room.users.values()) {
+                if (u.state != UserState.SPECTATING) {
+                    countTotal++;
+                    if (u.votedToSkipIntro) {
+                        countSkipped++;
+                    }
+                }
+            }
+        }
+        int countRequired = countTotal / 2 + 1;
+        if (countTotal > 0 && countSkipped >= countRequired) {
+            room.introSkipPassed = true;
+            broadcastToRoom(room, "VoteToSkipIntroPassed", 0, null);
         }
     }
 
@@ -1130,7 +1171,7 @@ public class MultiplayerHub {
         else packer.packNil();
 
         // 3: Mods
-        packer.packArrayHeader(0);
+        packMods(packer, u.mods);
 
         // 4: MatchState
         packer.packNil();
@@ -1214,7 +1255,7 @@ public class MultiplayerHub {
             if (a != null) acronym = a.toString();
         }
         packer.packString(acronym);
-        packer.packMapHeader(0);
+        packer.packArrayHeader(0);
     }
 
     public static PlaylistItem parsePlaylistItem(Value v) {
