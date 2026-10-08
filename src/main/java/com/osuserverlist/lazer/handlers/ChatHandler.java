@@ -33,7 +33,7 @@ public class ChatHandler implements Handler {
     private final ServerConfig config;
     private final com.osuserverlist.lazer.signalr.NotificationHub notificationHub;
 
-    private final AtomicLong nextMessageId = new AtomicLong(1);
+    private final AtomicLong nextMessageId = new AtomicLong(System.currentTimeMillis());
     private final Map<Integer, List<Map<String, Object>>> channelMessages = new ConcurrentHashMap<>();
     private final List<Map<String, Object>> allMessages = new CopyOnWriteArrayList<>();
     private final Map<Integer, Set<Integer>> userJoinedChannels = new ConcurrentHashMap<>();
@@ -112,7 +112,11 @@ public class ChatHandler implements Handler {
                 channelId > 1000 ? "MULTIPLAYER" : "PUBLIC",
                 joined);
 
-        ctx.status(200).json(channel);
+        Map<String, Object> resp = new LinkedHashMap<>();
+        resp.put("channel", channel);
+        resp.put("users", Collections.emptyList());
+
+        ctx.status(200).json(resp);
     }
 
     public void handleGetChannelMessages(@NotNull Context ctx) {

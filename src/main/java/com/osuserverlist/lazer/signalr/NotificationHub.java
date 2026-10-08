@@ -120,10 +120,17 @@ public class NotificationHub {
 
     public void broadcastChatMessage(Map<String, Object> messageMap) {
         if (messageMap == null) return;
-        Map<String, Object> data = Map.of("messages", List.of(messageMap));
+        List<Object> users = new ArrayList<>();
+        if (messageMap.containsKey("sender") && messageMap.get("sender") != null) {
+            users.add(messageMap.get("sender"));
+        }
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("messages", List.of(messageMap));
+        data.put("users", users);
 
+        Set<WsContext> seen = Collections.newSetFromMap(new IdentityHashMap<>());
         for (NotificationSession s : sessions.values()) {
-            if (s.listeningChat) {
+            if (s.listeningChat && s.ws != null && seen.add(s.ws)) {
                 sendEvent(s, "chat.message.new", data);
             }
         }
@@ -158,6 +165,7 @@ public class NotificationHub {
             session.ws.send(json);
         } catch (Exception e) {
             logger.debug("Failed to send notification event {}: {}", event, e.getMessage());
+            sessions.remove(session.ws.sessionId());
         }
     }
 
