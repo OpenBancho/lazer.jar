@@ -18,9 +18,11 @@ public class OAuthHandler implements Handler {
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private final AuthService authService;
+    private final com.osuserverlist.lazer.telemetry.TelemetryManager telemetryManager;
 
-    public OAuthHandler(AuthService authService) {
+    public OAuthHandler(AuthService authService, com.osuserverlist.lazer.telemetry.TelemetryManager telemetryManager) {
         this.authService = authService;
+        this.telemetryManager = telemetryManager;
     }
 
     @Override
@@ -30,6 +32,13 @@ public class OAuthHandler implements Handler {
         String password = ctx.formParam("password");
         String refreshToken = ctx.formParam("refresh_token");
         String scope = ctx.formParam("scope");
+        String fingerprint = ctx.formParam("fingerprint");
+        if (fingerprint == null || fingerprint.isBlank()) {
+            fingerprint = ctx.formParam("telemetry");
+        }
+        if (fingerprint == null || fingerprint.isBlank()) {
+            fingerprint = ctx.header("X-Client-Fingerprint");
+        }
 
         // Fallback to JSON body if not in form params
         if (grantType == null && ctx.body().startsWith("{")) {
@@ -40,11 +49,24 @@ public class OAuthHandler implements Handler {
                 if (json.has("password")) password = json.get("password").asText();
                 if (json.has("refresh_token")) refreshToken = json.get("refresh_token").asText();
                 if (json.has("scope")) scope = json.get("scope").asText();
+                if (json.has("fingerprint") && (fingerprint == null || fingerprint.isBlank())) {
+                    fingerprint = json.get("fingerprint").asText();
+                }
+                if (json.has("telemetry") && (fingerprint == null || fingerprint.isBlank())) {
+                    fingerprint = json.get("telemetry").asText();
+                }
             } catch (Exception ignored) {}
         }
 
         if (grantType == null || grantType.isBlank()) {
             grantType = "password";
+        }
+
+        String clientIp = ctx.header("X-Forwarded-For");
+        if (clientIp == null || clientIp.isBlank()) {
+            clientIp = ctx.ip();
+        } else {
+            clientIp = clientIp.split(",")[0].trim();
         }
 
         if ("password".equalsIgnoreCase(grantType)) {
@@ -57,6 +79,13 @@ public class OAuthHandler implements Handler {
             if (pair == null) {
                 sendError(ctx, 401, "invalid_grant", "Invalid username or password.");
                 return;
+            }
+
+            if (telemetryManager != null) {
+                TokenStore.TokenData tokenData = authService.resolveToken(pair.accessToken);
+                if (tokenData != null) {
+                    telemetryManager.processTelemetryAsync(tokenData.userId, tokenData.username, clientIp, fingerprint);
+                }
             }
 
             sendSuccess(ctx, pair);
@@ -73,6 +102,13 @@ public class OAuthHandler implements Handler {
             if (pair == null) {
                 sendError(ctx, 401, "invalid_grant", "Invalid or expired refresh token.");
                 return;
+            }
+
+            if (telemetryManager != null) {
+                TokenStore.TokenData tokenData = authService.resolveToken(pair.accessToken);
+                if (tokenData != null) {
+                    telemetryManager.processTelemetryAsync(tokenData.userId, tokenData.username, clientIp, fingerprint);
+                }
             }
 
             sendSuccess(ctx, pair);

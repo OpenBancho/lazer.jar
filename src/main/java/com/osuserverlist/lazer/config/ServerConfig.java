@@ -44,10 +44,16 @@ public class ServerConfig {
         this.directSearch = dotenv.get("DIRECT_SEARCH", "https://osu.direct/api/search");
         this.directSearchV2 = dotenv.get("DIRECT_SEARCH_V2", "https://catboy.best/api/v2/search");
         this.directDownload = dotenv.get("DIRECT_DOWNLOAD", "https://catboy.best/d");
+
+        this.discordWebhookUrl = dotenv.get("DISCORD_WEBHOOK_URL", "");
+        this.hmacSecret = dotenv.get("HMAC_SECRET", "default_lazer_secret_key");
     }
 
     public final String osuApiKey;
     public final String directSearch;
     public final String directSearchV2;
     public final String directDownload;
+
+    public final String discordWebhookUrl;
+    public final String hmacSecret;
 }

@@ -6,6 +6,7 @@ import com.osuserverlist.lazer.config.ServerConfig;
 import com.osuserverlist.lazer.handlers.UserResponseBuilder;
 import com.osuserverlist.lazer.models.BeatmapRecord;
 import com.osuserverlist.lazer.models.ScoreRecord;
+import com.osuserverlist.lazer.models.TelemetryRecord;
 import com.osuserverlist.lazer.models.User;
 import com.osuserverlist.lazer.models.UserStatistics;
 import com.zaxxer.hikari.HikariConfig;
@@ -55,6 +56,7 @@ public class DatabaseManager {
             this.dataSource = new HikariDataSource(hikariConfig);
             logger.info("Connected to MySQL database [{}] at {}:{}", config.dbName, config.dbHost, config.dbPort);
             ensureLazerScoreColumn();
+            ensureTelemetryTable();
         } catch (Exception e) {
             logger.error("Failed to connect to MySQL database: {}", e.getMessage());
         }
@@ -1551,6 +1553,161 @@ public class DatabaseManager {
             logger.error("Error counting scores: {}", e.getMessage());
         }
         return 0;
+    }
+
+    private void ensureTelemetryTable() {
+        String sql = "CREATE TABLE IF NOT EXISTS user_telemetry (" +
+                "id BIGINT AUTO_INCREMENT PRIMARY KEY, " +
+                "user_id INT NOT NULL, " +
+                "username VARCHAR(64) NOT NULL, " +
+                "ip VARCHAR(45) NOT NULL, " +
+                "system_fingerprint VARCHAR(64) NOT NULL, " +
+                "hardware_hash VARCHAR(64) NOT NULL, " +
+                "os VARCHAR(128), " +
+                "lazer_version VARCHAR(64), " +
+                "arch VARCHAR(32), " +
+                "cpu VARCHAR(128), " +
+                "cores INT, " +
+                "gpu VARCHAR(128), " +
+                "ram_mb INT, " +
+                "resolution VARCHAR(64), " +
+                "refresh_rate INT, " +
+                "locale VARCHAR(32), " +
+                "timezone VARCHAR(64), " +
+                "raw_json TEXT, " +
+                "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, " +
+                "INDEX idx_user_id (user_id), " +
+                "INDEX idx_fingerprint (system_fingerprint), " +
+                "INDEX idx_hardware_hash (hardware_hash), " +
+                "INDEX idx_ip (ip)" +
+                ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci";
+        try (Connection conn = getConnection();
+             Statement stmt = conn.createStatement()) {
+            stmt.executeUpdate(sql);
+            logger.info("user_telemetry table verified.");
+        } catch (Exception e) {
+            logger.warn("Could not check/create user_telemetry table: {}", e.getMessage());
+        }
+    }
+
+    public void saveTelemetry(TelemetryRecord record) {
+        String sql = "INSERT INTO user_telemetry " +
+                "(user_id, username, ip, system_fingerprint, hardware_hash, os, lazer_version, arch, cpu, cores, gpu, ram_mb, resolution, refresh_rate, locale, timezone, raw_json) " +
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        try (Connection conn = getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setInt(1, record.userId);
+            stmt.setString(2, record.username != null ? record.username : "");
+            stmt.setString(3, record.ip != null ? record.ip : "");
+            stmt.setString(4, record.systemFingerprint != null ? record.systemFingerprint : "");
+            stmt.setString(5, record.hardwareHash != null ? record.hardwareHash : "");
+            stmt.setString(6, record.os);
+            stmt.setString(7, record.lazerVersion);
+            stmt.setString(8, record.arch);
+            stmt.setString(9, record.cpu);
+            stmt.setInt(10, record.cores);
+            stmt.setString(11, record.gpu);
+            stmt.setInt(12, record.ramMb);
+            stmt.setString(13, record.resolution);
+            stmt.setInt(14, record.refreshRate);
+            stmt.setString(15, record.locale);
+            stmt.setString(16, record.timezone);
+            stmt.setString(17, record.rawJson);
+            stmt.executeUpdate();
+        } catch (SQLException e) {
+            logger.error("Error saving telemetry for user {}: {}", record.userId, e.getMessage());
+        }
+    }
+
+    public List<TelemetryRecord> findOtherAccountsByFingerprint(String systemFingerprint, int excludeUserId) {
+        if (systemFingerprint == null || systemFingerprint.isBlank()) return Collections.emptyList();
+        String sql = "SELECT ut.* FROM user_telemetry ut " +
+                "INNER JOIN (" +
+                "  SELECT MAX(id) AS max_id FROM user_telemetry " +
+                "  WHERE system_fingerprint = ? AND user_id != ? " +
+                "  GROUP BY user_id LIMIT 10" +
+                ") sub ON ut.id = sub.max_id ORDER BY ut.id DESC";
+        return queryTelemetryList(sql, systemFingerprint, excludeUserId);
+    }
+
+    public List<TelemetryRecord> findOtherAccountsByHardwareHash(String hardwareHash, int excludeUserId) {
+        if (hardwareHash == null || hardwareHash.isBlank()) return Collections.emptyList();
+        String sql = "SELECT ut.* FROM user_telemetry ut " +
+                "INNER JOIN (" +
+                "  SELECT MAX(id) AS max_id FROM user_telemetry " +
+                "  WHERE hardware_hash = ? AND user_id != ? " +
+                "  GROUP BY user_id LIMIT 10" +
+                ") sub ON ut.id = sub.max_id ORDER BY ut.id DESC";
+        return queryTelemetryList(sql, hardwareHash, excludeUserId);
+    }
+
+    public List<TelemetryRecord> findOtherAccountsByIp(String ip, int excludeUserId) {
+        if (ip == null || ip.isBlank() || "127.0.0.1".equals(ip)) return Collections.emptyList();
+        String sql = "SELECT ut.* FROM user_telemetry ut " +
+                "INNER JOIN (" +
+                "  SELECT MAX(id) AS max_id FROM user_telemetry " +
+                "  WHERE ip = ? AND user_id != ? " +
+                "  GROUP BY user_id LIMIT 10" +
+                ") sub ON ut.id = sub.max_id ORDER BY ut.id DESC";
+        return queryTelemetryList(sql, ip, excludeUserId);
+    }
+
+    public List<TelemetryRecord> getRecentTelemetry(int userId, int limit) {
+        String sql = "SELECT * FROM user_telemetry WHERE user_id = ? ORDER BY id DESC LIMIT " + Math.max(1, limit);
+        List<TelemetryRecord> list = new ArrayList<>();
+        try (Connection conn = getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setInt(1, userId);
+            try (ResultSet rs = stmt.executeQuery()) {
+                while (rs.next()) {
+                    list.add(mapTelemetryRecord(rs));
+                }
+            }
+        } catch (SQLException e) {
+            logger.error("Error querying recent telemetry for user {}: {}", userId, e.getMessage());
+        }
+        return list;
+    }
+
+    private List<TelemetryRecord> queryTelemetryList(String sql, String param, int excludeUserId) {
+        List<TelemetryRecord> list = new ArrayList<>();
+        try (Connection conn = getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setString(1, param);
+            stmt.setInt(2, excludeUserId);
+            try (ResultSet rs = stmt.executeQuery()) {
+                while (rs.next()) {
+                    list.add(mapTelemetryRecord(rs));
+                }
+            }
+        } catch (SQLException e) {
+            logger.error("Error querying telemetry list: {}", e.getMessage());
+        }
+        return list;
+    }
+
+    private TelemetryRecord mapTelemetryRecord(ResultSet rs) throws SQLException {
+        TelemetryRecord r = new TelemetryRecord();
+        r.id = rs.getLong("id");
+        r.userId = rs.getInt("user_id");
+        r.username = rs.getString("username");
+        r.ip = rs.getString("ip");
+        r.systemFingerprint = rs.getString("system_fingerprint");
+        r.hardwareHash = rs.getString("hardware_hash");
+        r.os = rs.getString("os");
+        r.lazerVersion = rs.getString("lazer_version");
+        r.arch = rs.getString("arch");
+        r.cpu = rs.getString("cpu");
+        r.cores = rs.getInt("cores");
+        r.gpu = rs.getString("gpu");
+        r.ramMb = rs.getInt("ram_mb");
+        r.resolution = rs.getString("resolution");
+        r.refreshRate = rs.getInt("refresh_rate");
+        r.locale = rs.getString("locale");
+        r.timezone = rs.getString("timezone");
+        r.rawJson = rs.getString("raw_json");
+        r.createdAt = rs.getTimestamp("created_at");
+        return r;
     }
 
     public void close() {
