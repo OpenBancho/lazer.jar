@@ -40,14 +40,16 @@ public class AnticheatFlagHandler {
     private final DatabaseManager databaseManager;
     private final AnticheatFlagWebhook webhook;
     private final ScoreSignatureTracker signatureTracker;
+    private final boolean strictClient;
     private final List<ApiKey> apiKeys = new ArrayList<>();
     private final ConcurrentHashMap<String, Long> lastFlagAt = new ConcurrentHashMap<>();
 
     public AnticheatFlagHandler(ServerConfig config, DatabaseManager databaseManager) {
         this.databaseManager = databaseManager;
+        this.strictClient = config.strictClient;
         this.webhook = new AnticheatFlagWebhook(config.acWebhookFlags);
         this.signatureTracker = new ScoreSignatureTracker(
-                config.acSigningPublicKey,
+                config.strictClient ? config.acSigningPublicKey : "",
                 Math.max(10, config.acSignatureTimeoutSeconds) * 1000L,
                 (userId, userName, code, summary, hint) -> raiseFlag(userId, userName, code, summary, hint, "ljar"));
 
@@ -73,6 +75,11 @@ public class AnticheatFlagHandler {
     }
 
     public void handleFlag(@NotNull Context ctx) {
+        if (!strictClient) {
+            ctx.status(503).json(Map.of("error", "Anti-cheat is not used by this server (CLIENT_MODE=nonstrict)"));
+            return;
+        }
+
         if (apiKeys.isEmpty()) {
             ctx.status(503).json(Map.of("error", "Anti-cheat flag endpoint is not configured"));
             return;
@@ -129,6 +136,11 @@ public class AnticheatFlagHandler {
      * {@link ScoreSignatureTracker#canonicalMessage}.
      */
     public void handleSignature(@NotNull Context ctx) {
+        if (!strictClient) {
+            ctx.status(503).json(Map.of("error", "Anti-cheat is not used by this server (CLIENT_MODE=nonstrict)"));
+            return;
+        }
+
         if (!signatureTracker.isEnabled()) {
             ctx.status(503).json(Map.of("error", "Score signatures are not configured"));
             return;

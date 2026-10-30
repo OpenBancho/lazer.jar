@@ -27,14 +27,15 @@ public class LoginTicketVerifier {
 
     public LoginTicketVerifier(String publicKeyBase64, boolean requireTickets) {
         this.publicKey = ScoreSignatureTracker.parseKey(publicKeyBase64);
-        this.required = requireTickets && publicKey != null;
+        this.required = requireTickets;
 
         if (requireTickets && publicKey == null) {
-            logger.error("AC_REQUIRE_LOGIN_TICKET is set but AC_SIGNING_PUBLIC_KEY is missing/invalid: login tickets are NOT enforced");
+            // Fail closed: a strict server must never run without being able to check tickets.
+            throw new IllegalStateException("CLIENT_MODE=strict but AC_SIGNING_PUBLIC_KEY is invalid");
         } else if (required) {
-            logger.info("Login tickets from the anti-cheat server are required to log in");
+            logger.info("CLIENT_MODE=strict: every login needs a login ticket from the anti-cheat server");
         } else {
-            logger.warn("Login tickets are not required (AC_REQUIRE_LOGIN_TICKET is not enabled)");
+            logger.info("CLIENT_MODE=nonstrict: anti-cheat login tickets are not used");
         }
     }
 
