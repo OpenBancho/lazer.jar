@@ -41,17 +41,19 @@ public class AnticheatFlagHandler {
     private final AnticheatFlagWebhook webhook;
     private final ScoreSignatureTracker signatureTracker;
     private final boolean strictClient;
+    private final boolean hideUnsignedScores;
     private final List<ApiKey> apiKeys = new ArrayList<>();
     private final ConcurrentHashMap<String, Long> lastFlagAt = new ConcurrentHashMap<>();
 
     public AnticheatFlagHandler(ServerConfig config, DatabaseManager databaseManager) {
         this.databaseManager = databaseManager;
         this.strictClient = config.strictClient;
+        this.hideUnsignedScores = config.hideUnsignedScores;
         this.webhook = new AnticheatFlagWebhook(config.acWebhookFlags);
         this.signatureTracker = new ScoreSignatureTracker(
                 config.strictClient ? config.acSigningPublicKey : "",
                 Math.max(10, config.acSignatureTimeoutSeconds) * 1000L,
-                (userId, userName, code, summary, hint) -> raiseFlag(userId, userName, code, summary, hint, "ljar"));
+                (userId, userName, code, summary, hint, scoreId) -> raiseFlag(userId, userName, code, summary, hint, "ljar", scoreId));
 
         // AC_API_KEYS = name:key,name2:key2   (a bare value is used as both name and key)
         for (String entry : config.acApiKeys.split(",")) {
@@ -121,7 +123,7 @@ public class AnticheatFlagHandler {
         if (summary.isEmpty()) summary = describe(code);
         if (hint.isEmpty()) hint = hintFor(code);
 
-        RaiseResult result = raiseFlag(user.id, user.name, code, summary, hint, caller.name());
+        RaiseResult result = raiseFlag(user.id, user.name, code, summary, hint, caller.name(), null);
         switch (result) {
             case RECORDED -> ctx.status(200).json(Map.of("status", "recorded"));
             case DUPLICATE -> ctx.status(200).json(Map.of("status", "duplicate"));
@@ -177,25 +179,32 @@ public class AnticheatFlagHandler {
 
     private enum RaiseResult { RECORDED, DUPLICATE, FAILED }
 
-    private RaiseResult raiseFlag(int userId, String userName, String code, String summary, String hint, String source) {
+    private RaiseResult raiseFlag(int userId, String userName, String code, String summary, String hint, String source, Long scoreId) {
         long now = System.currentTimeMillis();
         long window = code.equals("no_signature") ? NO_SIGNATURE_DEDUPE_MS : DEDUPE_MS;
         String dedupeKey = userId + ":" + code;
 
-        Long previous = lastFlagAt.get(dedupeKey);
-        if (previous != null && now - previous < window) {
-            return RaiseResult.DUPLICATE;
-        }
-        lastFlagAt.put(dedupeKey, now);
-
         summary = truncate(summary, 300);
         hint = truncate(hint, 300);
 
+        // Every flag is kept as evidence; only the Discord message is limited to one per window.
         boolean saved = databaseManager.saveAnticheatFlag(userId, userName, code, summary, hint, source);
         logger.warn("ANTICHEAT FLAG [{}] user={} ({}) via={} summary={}", code, userName, userId, source, summary);
 
-        webhook.flag(userName, summary, hint);
-        return saved ? RaiseResult.RECORDED : RaiseResult.FAILED;
+        Long previous = lastFlagAt.get(dedupeKey);
+        boolean announce = previous == null || now - previous >= window;
+        if (announce) {
+            lastFlagAt.put(dedupeKey, now);
+            webhook.flag(userName, summary, hint);
+        }
+
+        if (hideUnsignedScores && scoreId != null && (code.equals("no_signature") || code.equals("bad_signature"))) {
+            boolean hidden = databaseManager.hideScore(scoreId);
+            logger.warn("Score {} of {} hidden (unconfirmed by the anti-cheat server): {}", scoreId, userName, hidden);
+        }
+
+        if (!saved) return RaiseResult.FAILED;
+        return announce ? RaiseResult.RECORDED : RaiseResult.DUPLICATE;
     }
 
     private ApiKey authenticate(Context ctx) {
@@ -224,6 +233,8 @@ public class AnticheatFlagHandler {
             case "violation" -> "Anti-cheat violation detected";
             case "no_signature" -> "Score was not confirmed by the anti-cheat server";
             case "bad_signature" -> "Score signature does not match the submitted score";
+            case "modified_files" -> "Game files do not match any official release";
+            case "forged_request" -> "Request to the anti-cheat server was not made by anticheat.dll";
             default -> "Anti-cheat flag (" + code + ")";
         };
     }
@@ -235,6 +246,8 @@ public class AnticheatFlagHandler {
             case "violation" -> "Debugger, injected assembly, speed hack or synthetic input";
             case "no_signature" -> "Client without anti-cheat, modified or outdated client, or the anti-cheat server is blocked";
             case "bad_signature" -> "Score modified after anti-cheat signing, or a forged signature";
+            case "modified_files" -> "Patched game assemblies (internal mod / cheat loader)";
+            case "forged_request" -> "Script or custom client talking to the anti-cheat server directly";
             default -> "-";
         };
     }

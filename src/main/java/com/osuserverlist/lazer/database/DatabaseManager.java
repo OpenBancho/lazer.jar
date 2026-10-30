@@ -1591,6 +1591,93 @@ public class DatabaseManager {
         }
     }
 
+    /**
+     * Removes a score from the leaderboards (status -1). If it was the player's best on the map, the best remaining score
+     * takes its place, and the player's weighted pp is recalculated.
+     */
+    public boolean hideScore(long scoreId) {
+        try (Connection conn = getConnection()) {
+            int userId;
+            String mapMd5;
+            int mode;
+            int status;
+
+            try (PreparedStatement stmt = conn.prepareStatement("SELECT userid, map_md5, mode, status FROM scores WHERE id = ?")) {
+                stmt.setLong(1, scoreId);
+                try (ResultSet rs = stmt.executeQuery()) {
+                    if (!rs.next()) return false;
+                    userId = rs.getInt("userid");
+                    mapMd5 = rs.getString("map_md5");
+                    mode = rs.getInt("mode");
+                    status = rs.getInt("status");
+                }
+            }
+
+            if (status == -1) return true;
+
+            try (PreparedStatement stmt = conn.prepareStatement("UPDATE scores SET status = -1 WHERE id = ?")) {
+                stmt.setLong(1, scoreId);
+                stmt.executeUpdate();
+            }
+
+            if (status == 2) {
+                String bestSql = "SELECT id FROM scores WHERE userid = ? AND map_md5 = ? AND mode = ? AND status = 0 AND grade != 'F' ORDER BY pp DESC, score DESC LIMIT 1";
+                try (PreparedStatement stmt = conn.prepareStatement(bestSql)) {
+                    stmt.setInt(1, userId);
+                    stmt.setString(2, mapMd5);
+                    stmt.setInt(3, mode);
+                    try (ResultSet rs = stmt.executeQuery()) {
+                        if (rs.next()) {
+                            try (PreparedStatement restore = conn.prepareStatement("UPDATE scores SET status = 2 WHERE id = ?")) {
+                                restore.setLong(1, rs.getLong("id"));
+                                restore.executeUpdate();
+                            }
+                        }
+                    }
+                }
+            }
+
+            recalculateWeightedPp(conn, userId, mode);
+            return true;
+        } catch (SQLException e) {
+            logger.error("Error hiding score {}: {}", scoreId, e.getMessage());
+            return false;
+        }
+    }
+
+    private void recalculateWeightedPp(Connection conn, int userId, int mode) throws SQLException {
+        String ppSql = """
+                SELECT SUM(pp * POW(0.95, rn - 1)) AS weighted_pp
+                FROM (
+                    SELECT pp, ROW_NUMBER() OVER (ORDER BY pp DESC) AS rn
+                    FROM (
+                        SELECT MAX(s.pp) AS pp
+                        FROM scores s
+                        JOIN maps m ON s.map_md5 = m.md5
+                        WHERE s.userid = ? AND s.mode = ? AND m.status >= 1 AND s.status = 2
+                        GROUP BY s.map_md5
+                    ) best_scores
+                ) ranked
+                """;
+        int weighted = 0;
+        try (PreparedStatement stmt = conn.prepareStatement(ppSql)) {
+            stmt.setInt(1, userId);
+            stmt.setInt(2, mode);
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (rs.next()) {
+                    double wpp = rs.getDouble("weighted_pp");
+                    if (!rs.wasNull()) weighted = (int) Math.round(wpp);
+                }
+            }
+        }
+        try (PreparedStatement stmt = conn.prepareStatement("UPDATE stats SET pp = ? WHERE id = ? AND mode = ?")) {
+            stmt.setInt(1, weighted);
+            stmt.setInt(2, userId);
+            stmt.setInt(3, mode);
+            stmt.executeUpdate();
+        }
+    }
+
     public boolean saveAnticheatFlag(int userId, String username, String code, String summary, String hint, String source) {
         String sql = "INSERT INTO anticheat_flags (user_id, username, code, reason, hint, source) VALUES (?, ?, ?, ?, ?, ?)";
         try (Connection conn = getConnection();

@@ -37,12 +37,12 @@ public class ScoreSignatureTracker {
     private static final int MAX_EARLY_SIGNATURES = 10_000;
 
     public interface FlagSink {
-        void flag(int userId, String userName, String code, String summary, String hint);
+        void flag(int userId, String userName, String code, String summary, String hint, long scoreId);
     }
 
     public enum SignatureResult { VERIFIED, STORED, REJECTED, DISABLED }
 
-    private record Pending(int userId, String userName, int beatmapId, long totalScore, int maxCombo, long scoreId) {}
+    private record Pending(int userId, String userName, int beatmapId, String bodySha256, long scoreId) {}
 
     private record EarlySignature(byte[] signature, long receivedAtMs) {}
 
@@ -74,16 +74,19 @@ public class ScoreSignatureTracker {
         return publicKey != null;
     }
 
-    /** The exact bytes the anti-cheat server signs. */
-    public static String canonicalMessage(long tokenId, int userId, int beatmapId, long totalScore, int maxCombo) {
-        return "owsig1|" + tokenId + "|" + userId + "|" + beatmapId + "|" + totalScore + "|" + maxCombo;
+    /**
+     * The exact bytes the anti-cheat server signs. bodySha256 is the lower-case hex SHA-256 of the request body of the
+     * score submission, so every field of the score is covered, not only a few numbers.
+     */
+    public static String canonicalMessage(long tokenId, int userId, int beatmapId, String bodySha256) {
+        return "owsig2|" + tokenId + "|" + userId + "|" + beatmapId + "|" + bodySha256;
     }
 
     /** Called right after a score was saved. */
-    public void scoreSaved(long tokenId, int userId, String userName, int beatmapId, long totalScore, int maxCombo, long scoreId) {
+    public void scoreSaved(long tokenId, int userId, String userName, int beatmapId, String bodySha256, long scoreId) {
         if (!isEnabled()) return;
 
-        Pending p = new Pending(userId, userName, beatmapId, totalScore, maxCombo, scoreId);
+        Pending p = new Pending(userId, userName, beatmapId, bodySha256, scoreId);
         EarlySignature signature;
 
         synchronized (this) {
@@ -129,7 +132,7 @@ public class ScoreSignatureTracker {
     }
 
     private boolean check(long tokenId, Pending p, byte[] signature) {
-        String message = canonicalMessage(tokenId, p.userId(), p.beatmapId(), p.totalScore(), p.maxCombo());
+        String message = canonicalMessage(tokenId, p.userId(), p.beatmapId(), p.bodySha256());
 
         if (verify(message, signature)) {
             logger.info("Score {} (token {}) confirmed by the anti-cheat server", p.scoreId(), tokenId);
@@ -139,7 +142,7 @@ public class ScoreSignatureTracker {
         logger.warn("Score {} (token {}) has an invalid anti-cheat signature", p.scoreId(), tokenId);
         sink.flag(p.userId(), p.userName(), "bad_signature",
                 "Score signature does not match the submitted score",
-                "Score modified after anti-cheat signing, or a forged signature");
+                "Score modified after anti-cheat signing, or a forged signature", p.scoreId());
         return false;
     }
 
@@ -153,7 +156,7 @@ public class ScoreSignatureTracker {
         logger.warn("Score {} (token {}) was not confirmed by the anti-cheat server in time", p.scoreId(), tokenId);
         sink.flag(p.userId(), p.userName(), "no_signature",
                 "Score was not confirmed by the anti-cheat server",
-                "Client without anti-cheat, modified or outdated client, or the anti-cheat server is blocked");
+                "Client without anti-cheat, modified or outdated client, or the anti-cheat server is blocked", p.scoreId());
     }
 
     private boolean verify(String message, byte[] signature) {
