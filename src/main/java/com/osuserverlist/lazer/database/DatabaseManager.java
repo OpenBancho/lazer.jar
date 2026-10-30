@@ -57,6 +57,7 @@ public class DatabaseManager {
             logger.info("Connected to MySQL database [{}] at {}:{}", config.dbName, config.dbHost, config.dbPort);
             ensureLazerScoreColumn();
             ensureTelemetryTable();
+            ensureAnticheatFlagsTable();
         } catch (Exception e) {
             logger.error("Failed to connect to MySQL database: {}", e.getMessage());
         }
@@ -1553,6 +1554,46 @@ public class DatabaseManager {
             logger.error("Error counting scores: {}", e.getMessage());
         }
         return 0;
+    }
+
+    private void ensureAnticheatFlagsTable() {
+        String sql = "CREATE TABLE IF NOT EXISTS anticheat_flags (" +
+                "id BIGINT AUTO_INCREMENT PRIMARY KEY, " +
+                "user_id INT NOT NULL, " +
+                "username VARCHAR(64) NOT NULL, " +
+                "ip VARCHAR(45) NOT NULL, " +
+                "code VARCHAR(32) NOT NULL, " +
+                "reason VARCHAR(1024) NOT NULL, " +
+                "client_version VARCHAR(64), " +
+                "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, " +
+                "INDEX idx_flag_user (user_id), " +
+                "INDEX idx_flag_code (code)" +
+                ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci";
+        try (Connection conn = getConnection();
+             Statement stmt = conn.createStatement()) {
+            stmt.executeUpdate(sql);
+            logger.info("anticheat_flags table verified.");
+        } catch (Exception e) {
+            logger.warn("Could not check/create anticheat_flags table: {}", e.getMessage());
+        }
+    }
+
+    public boolean saveAnticheatFlag(int userId, String username, String ip, String code, String reason, String clientVersion) {
+        String sql = "INSERT INTO anticheat_flags (user_id, username, ip, code, reason, client_version) VALUES (?, ?, ?, ?, ?, ?)";
+        try (Connection conn = getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setInt(1, userId);
+            stmt.setString(2, username != null ? username : "");
+            stmt.setString(3, ip != null ? ip : "");
+            stmt.setString(4, code);
+            stmt.setString(5, reason);
+            stmt.setString(6, clientVersion);
+            stmt.executeUpdate();
+            return true;
+        } catch (SQLException e) {
+            logger.error("Error saving anticheat flag for user {}: {}", userId, e.getMessage());
+            return false;
+        }
     }
 
     private void ensureTelemetryTable() {
