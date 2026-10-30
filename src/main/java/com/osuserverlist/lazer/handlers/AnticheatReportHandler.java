@@ -2,6 +2,7 @@ package com.osuserverlist.lazer.handlers;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.osuserverlist.lazer.anticheat.AnticheatLogger;
 import com.osuserverlist.lazer.auth.AuthService;
 import com.osuserverlist.lazer.auth.TokenStore;
 import com.osuserverlist.lazer.database.DatabaseManager;
@@ -76,6 +77,7 @@ public class AnticheatReportHandler {
         String ip = truncate(realIp != null && !realIp.isBlank() ? realIp.trim() : ctx.ip(), 45);
 
         boolean saved = databaseManager.saveAnticheatFlag(user.id, user.name, ip, code, reason, clientVersion);
+        AnticheatLogger.flagReceived(user, code, reason, clientVersion);
         logger.warn("ANTICHEAT FLAG [{}] user={} ({}) ip={} client={} reason={}", code, user.name, user.id, ip, clientVersion, reason);
 
         if (!saved) {
