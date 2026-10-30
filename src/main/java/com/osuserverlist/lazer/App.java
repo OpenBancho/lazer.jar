@@ -54,6 +54,7 @@ public class App {
         com.osuserverlist.lazer.signalr.SpectatorHub spectatorHub = new com.osuserverlist.lazer.signalr.SpectatorHub(authService, databaseManager, onlineManager);
         ChatHandler chatHandler = new ChatHandler(authService, databaseManager, onlineManager, config, notificationHub);
         SoloScoreHandler soloScoreHandler = new SoloScoreHandler(authService, databaseManager, config, spectatorHub);
+        AnticheatReportHandler anticheatReportHandler = new AnticheatReportHandler(authService, databaseManager);
         BeatmapHandler beatmapHandler = new BeatmapHandler(databaseManager, config);
         RankingsHandler rankingsHandler = new RankingsHandler(databaseManager, config);
         SearchHandler searchHandler = new SearchHandler(databaseManager, onlineManager, config);
@@ -146,6 +147,7 @@ public class App {
             javalinConfig.routes.get("/d/{id}", beatmapHandler::handleLegacyDownload);
             javalinConfig.routes.get("/web/osu-search.php", beatmapHandler::handleLegacySearch);
             javalinConfig.routes.get("/web/osu-search-set.php", beatmapHandler::handleLegacySearchSet);
+            javalinConfig.routes.post("/api/v2/anticheat/report", anticheatReportHandler::handleReport);
             javalinConfig.routes.post("/api/v2/beatmaps/{beatmap_id}/solo/scores", soloScoreHandler::handleCreateScoreToken);
             javalinConfig.routes.post("/api/v2/beatmaps/{beatmap_id}/solo/scores/{token}/handshake", soloScoreHandler::handleHandshake);
             javalinConfig.routes.post("/api/v2/beatmaps/{beatmap_id}/solo/scores/handshake", soloScoreHandler::handleHandshake);
