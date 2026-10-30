@@ -30,6 +30,7 @@ public class SoloScoreHandler {
     private final DatabaseManager databaseManager;
     private final ServerConfig config;
     private final com.osuserverlist.lazer.signalr.SpectatorHub spectatorHub;
+    private final com.osuserverlist.lazer.anticheat.ScoreSignatureTracker signatureTracker;
 
     public static class ScoreTokenInfo {
         public final long id;
@@ -57,11 +58,13 @@ public class SoloScoreHandler {
     private final Map<Long, ScoreTokenInfo> scoreTokens = new ConcurrentHashMap<>();
 
     public SoloScoreHandler(AuthService authService, DatabaseManager databaseManager, ServerConfig config,
-                            com.osuserverlist.lazer.signalr.SpectatorHub spectatorHub) {
+                            com.osuserverlist.lazer.signalr.SpectatorHub spectatorHub,
+                            com.osuserverlist.lazer.anticheat.ScoreSignatureTracker signatureTracker) {
         this.authService = authService;
         this.databaseManager = databaseManager;
         this.config = config;
         this.spectatorHub = spectatorHub;
+        this.signatureTracker = signatureTracker;
     }
 
     private User authenticate(Context ctx) {
@@ -362,6 +365,9 @@ public class SoloScoreHandler {
         response.put("beatmap", bm);
 
         tokenInfo.submitted = true;
+
+        // The score is already saved; the anti-cheat server confirms it separately (a flag is raised if it does not).
+        signatureTracker.scoreSaved(token, user.id, user.name, beatmapId, totalScore, maxCombo, sc.id);
         tokenInfo.cachedResponse = response;
 
         logger.info("Score {} submitted successfully for user {} on beatmap {}: score={}, pp={}, rank={}",

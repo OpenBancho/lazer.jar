@@ -3,6 +3,7 @@ package com.osuserverlist.lazer.handlers;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.osuserverlist.lazer.anticheat.AnticheatFlagWebhook;
+import com.osuserverlist.lazer.anticheat.ScoreSignatureTracker;
 import com.osuserverlist.lazer.config.ServerConfig;
 import com.osuserverlist.lazer.database.DatabaseManager;
 import com.osuserverlist.lazer.models.User;
@@ -31,17 +32,24 @@ public class AnticheatFlagHandler {
     private static final Logger logger = LoggerFactory.getLogger(AnticheatFlagHandler.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final long DEDUPE_MS = 60_000L;
+    // A player without the anti-cheat would otherwise be flagged on every single score.
+    private static final long NO_SIGNATURE_DEDUPE_MS = 10 * 60_000L;
 
     private record ApiKey(String name, byte[] sha256) {}
 
     private final DatabaseManager databaseManager;
     private final AnticheatFlagWebhook webhook;
+    private final ScoreSignatureTracker signatureTracker;
     private final List<ApiKey> apiKeys = new ArrayList<>();
     private final ConcurrentHashMap<String, Long> lastFlagAt = new ConcurrentHashMap<>();
 
     public AnticheatFlagHandler(ServerConfig config, DatabaseManager databaseManager) {
         this.databaseManager = databaseManager;
         this.webhook = new AnticheatFlagWebhook(config.acWebhookFlags);
+        this.signatureTracker = new ScoreSignatureTracker(
+                config.acSigningPublicKey,
+                Math.max(10, config.acSignatureTimeoutSeconds) * 1000L,
+                (userId, userName, code, summary, hint) -> raiseFlag(userId, userName, code, summary, hint, "ljar"));
 
         // AC_API_KEYS = name:key,name2:key2   (a bare value is used as both name and key)
         for (String entry : config.acApiKeys.split(",")) {
@@ -105,28 +113,77 @@ public class AnticheatFlagHandler {
         code = truncate(code, 32);
         if (summary.isEmpty()) summary = describe(code);
         if (hint.isEmpty()) hint = hintFor(code);
-        summary = truncate(summary, 300);
-        hint = truncate(hint, 300);
 
-        long now = System.currentTimeMillis();
-        String dedupeKey = userId + ":" + code;
-        Long previous = lastFlagAt.get(dedupeKey);
-        if (previous != null && now - previous < DEDUPE_MS) {
-            ctx.status(200).json(Map.of("status", "duplicate"));
+        RaiseResult result = raiseFlag(user.id, user.name, code, summary, hint, caller.name());
+        switch (result) {
+            case RECORDED -> ctx.status(200).json(Map.of("status", "recorded"));
+            case DUPLICATE -> ctx.status(200).json(Map.of("status", "duplicate"));
+            default -> ctx.status(500).json(Map.of("error", "Failed to store flag"));
+        }
+    }
+
+    /**
+     * POST /api/v2/anticheat/signature
+     *   {"token_id": 1234567890, "signature": "<base64 Ed25519 signature>"}
+     * Sent by the anti-cheat server once it has validated a score. The signed message is
+     * {@link ScoreSignatureTracker#canonicalMessage}.
+     */
+    public void handleSignature(@NotNull Context ctx) {
+        if (!signatureTracker.isEnabled()) {
+            ctx.status(503).json(Map.of("error", "Score signatures are not configured"));
             return;
+        }
+
+        if (apiKeys.isEmpty() || authenticate(ctx) == null) {
+            ctx.status(401).json(Map.of("error", "Invalid API key"));
+            return;
+        }
+
+        long tokenId;
+        String signature;
+        try {
+            JsonNode body = MAPPER.readTree(ctx.body());
+            tokenId = body.path("token_id").asLong(0);
+            signature = body.path("signature").asText("");
+        } catch (Exception e) {
+            ctx.status(400).json(Map.of("error", "Invalid JSON"));
+            return;
+        }
+
+        if (tokenId <= 0 || signature.isBlank()) {
+            ctx.status(400).json(Map.of("error", "token_id and signature are required"));
+            return;
+        }
+
+        var result = signatureTracker.signatureReceived(tokenId, signature);
+        ctx.status(200).json(Map.of("status", result.name().toLowerCase()));
+    }
+
+    public ScoreSignatureTracker signatureTracker() {
+        return signatureTracker;
+    }
+
+    private enum RaiseResult { RECORDED, DUPLICATE, FAILED }
+
+    private RaiseResult raiseFlag(int userId, String userName, String code, String summary, String hint, String source) {
+        long now = System.currentTimeMillis();
+        long window = code.equals("no_signature") ? NO_SIGNATURE_DEDUPE_MS : DEDUPE_MS;
+        String dedupeKey = userId + ":" + code;
+
+        Long previous = lastFlagAt.get(dedupeKey);
+        if (previous != null && now - previous < window) {
+            return RaiseResult.DUPLICATE;
         }
         lastFlagAt.put(dedupeKey, now);
 
-        boolean saved = databaseManager.saveAnticheatFlag(user.id, user.name, code, summary, hint, caller.name());
-        logger.warn("ANTICHEAT FLAG [{}] user={} ({}) via={} summary={}", code, user.name, user.id, caller.name(), summary);
+        summary = truncate(summary, 300);
+        hint = truncate(hint, 300);
 
-        webhook.flag(user.name, summary, hint);
+        boolean saved = databaseManager.saveAnticheatFlag(userId, userName, code, summary, hint, source);
+        logger.warn("ANTICHEAT FLAG [{}] user={} ({}) via={} summary={}", code, userName, userId, source, summary);
 
-        if (!saved) {
-            ctx.status(500).json(Map.of("error", "Failed to store flag"));
-            return;
-        }
-        ctx.status(200).json(Map.of("status", "recorded"));
+        webhook.flag(userName, summary, hint);
+        return saved ? RaiseResult.RECORDED : RaiseResult.FAILED;
     }
 
     private ApiKey authenticate(Context ctx) {
@@ -153,6 +210,8 @@ public class AnticheatFlagHandler {
             case "image_tamper" -> "Game runtime memory was patched";
             case "cheat_signature" -> "Cheat memory-scanner signature was triggered";
             case "violation" -> "Anti-cheat violation detected";
+            case "no_signature" -> "Score was not confirmed by the anti-cheat server";
+            case "bad_signature" -> "Score signature does not match the submitted score";
             default -> "Anti-cheat flag (" + code + ")";
         };
     }
@@ -162,6 +221,8 @@ public class AnticheatFlagHandler {
             case "image_tamper" -> "Possible internal mod / injected cheat (e.g. Freedom)";
             case "cheat_signature" -> "Freedom-style internal mod";
             case "violation" -> "Debugger, injected assembly, speed hack or synthetic input";
+            case "no_signature" -> "Client without anti-cheat, modified or outdated client, or the anti-cheat server is blocked";
+            case "bad_signature" -> "Score modified after anti-cheat signing, or a forged signature";
             default -> "-";
         };
     }
