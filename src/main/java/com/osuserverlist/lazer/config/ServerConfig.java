@@ -51,7 +51,17 @@ public class ServerConfig {
         this.acWebhookFlags = dotenv.get("AC_WEBHOOK_FLAGS", "");
         this.acApiKeys = dotenv.get("AC_API_KEYS", "");
         this.acSigningPublicKey = dotenv.get("AC_SIGNING_PUBLIC_KEY", "");
-        this.acRequireLoginTicket = "true".equalsIgnoreCase(dotenv.get("AC_REQUIRE_LOGIN_TICKET", "false"));
+        // CLIENT_MODE decides which client this server supports:
+        //   strict    - only the anti-cheat client: every login needs the anti-cheat handshake ticket, scores need its signature
+        //   nonstrict - plain client: the anti-cheat is not involved at all
+        String clientMode = dotenv.get("CLIENT_MODE", "nonstrict").trim().toLowerCase();
+        if (!clientMode.equals("strict") && !clientMode.equals("nonstrict")) {
+            throw new IllegalStateException("CLIENT_MODE must be 'strict' or 'nonstrict', got '" + clientMode + "'");
+        }
+        this.strictClient = clientMode.equals("strict");
+        if (this.strictClient && this.acSigningPublicKey.isBlank()) {
+            throw new IllegalStateException("CLIENT_MODE=strict requires AC_SIGNING_PUBLIC_KEY (the anti-cheat server's public key)");
+        }
         this.acSignatureTimeoutSeconds = Integer.parseInt(dotenv.get("AC_SIGNATURE_TIMEOUT_SECONDS", "120"));
     }
 
@@ -69,7 +79,7 @@ public class ServerConfig {
     public final String acApiKeys;
     // Ed25519 public key (base64) of the anti-cheat server; scores must be confirmed with its signature.
     public final String acSigningPublicKey;
-    // Players must present a login ticket from the anti-cheat server (i.e. run anticheat.dll) to log in.
-    public final boolean acRequireLoginTicket;
+    // true: strict server (anti-cheat client required), false: nonstrict server (anti-cheat not involved)
+    public final boolean strictClient;
     public final int acSignatureTimeoutSeconds;
 }

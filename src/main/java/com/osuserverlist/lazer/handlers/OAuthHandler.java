@@ -37,11 +37,6 @@ public class OAuthHandler implements Handler {
         String scope = ctx.formParam("scope");
         String fingerprint = ctx.formParam("fingerprint");
         String acTicket = ctx.formParam("ac_ticket");
-        // The strict client announces itself; the non-strict client does not talk to the anti-cheat at all.
-        String acMode = ctx.formParam("ac_mode");
-        if (acMode == null || acMode.isBlank()) {
-            acMode = ctx.header("X-AC-Mode");
-        }
         if (acTicket == null || acTicket.isBlank()) {
             acTicket = ctx.header("X-AC-Ticket");
         }
@@ -62,7 +57,6 @@ public class OAuthHandler implements Handler {
                 if (json.has("refresh_token")) refreshToken = json.get("refresh_token").asText();
                 if (json.has("scope")) scope = json.get("scope").asText();
                 if (json.has("ac_ticket") && (acTicket == null || acTicket.isBlank())) acTicket = json.get("ac_ticket").asText();
-                if (json.has("ac_mode") && (acMode == null || acMode.isBlank())) acMode = json.get("ac_mode").asText();
                 if (json.has("fingerprint") && (fingerprint == null || fingerprint.isBlank())) {
                     fingerprint = json.get("fingerprint").asText();
                 }
@@ -83,7 +77,7 @@ public class OAuthHandler implements Handler {
             clientIp = clientIp.split(",")[0].trim();
         }
 
-        if (ticketVerifier.isRequired() && "strict".equalsIgnoreCase(acMode)
+        if (ticketVerifier.isRequired()
                 && ("password".equalsIgnoreCase(grantType) || "refresh_token".equalsIgnoreCase(grantType))) {
             String problem = ticketVerifier.check(acTicket, "password".equalsIgnoreCase(grantType) ? username : null);
             if (problem != null) {
