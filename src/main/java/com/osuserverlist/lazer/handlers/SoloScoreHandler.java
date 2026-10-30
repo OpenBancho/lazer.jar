@@ -2,9 +2,6 @@ package com.osuserverlist.lazer.handlers;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.osuserverlist.lazer.anticheat.ScoreAntiCheat;
-import com.osuserverlist.lazer.anticheat.AnticheatLogger;
-import com.osuserverlist.lazer.anticheat.ServerFencingToken;
-import com.osuserverlist.lazer.anticheat.ServerScoreCrypto;
 import com.osuserverlist.lazer.auth.AuthService;
 import com.osuserverlist.lazer.auth.TokenStore;
 import com.osuserverlist.lazer.calculators.ScoreSimulator;
@@ -42,12 +39,9 @@ public class SoloScoreHandler {
         public final String beatmapHash;
         public final long createdAtEpochMs;
 
-        public volatile ServerFencingToken.State state = ServerFencingToken.State.PENDING;
-        public volatile long fencingEpoch = 0;
-        public volatile long leaseExpirationEpochMs = 0;
-        public volatile int failedAttempts = 0;
-        public volatile byte[] sessionKey = null;
-        public volatile byte[] serverChallenge = null;
+        // Duplicate-request guard: a retry of an accepted submission gets the cached response back.
+        public volatile boolean submitted = false;
+        public volatile long processingUntilEpochMs = 0;
         public volatile Map<String, Object> cachedResponse = null;
 
         public ScoreTokenInfo(long id, int userId, int beatmapId, int rulesetId, String beatmapHash) {
@@ -124,102 +118,8 @@ public class SoloScoreHandler {
         ScoreTokenInfo tokenInfo = new ScoreTokenInfo(tokenId, user.id, beatmapId, rulesetId, beatmapHash);
         scoreTokens.put(tokenId, tokenInfo);
 
-        // Check if client provided ephemeral public key for mutual key binding
-        String clientKeyStr = ctx.formParam("client_public_key");
-        if (clientKeyStr == null || clientKeyStr.isBlank()) {
-            clientKeyStr = ctx.queryParam("client_public_key");
-        }
-
-        if (clientKeyStr != null && !clientKeyStr.isBlank()) {
-            try {
-                byte[] clientPub = Base64.getDecoder().decode(clientKeyStr.trim());
-                var handshake = ServerScoreCrypto.createHandshake(tokenId, clientPub, 120000L);
-                tokenInfo.sessionKey = handshake.sessionKey;
-                tokenInfo.serverChallenge = handshake.serverChallenge;
-                AnticheatLogger.clientConnected(user, null, beatmapId);
-
-                Map<String, Object> resp = new LinkedHashMap<>();
-                resp.put("id", tokenId);
-                resp.put("server_public_key", Base64.getEncoder().encodeToString(handshake.serverEphemeralPublicKey));
-                resp.put("server_challenge", Base64.getEncoder().encodeToString(handshake.serverChallenge));
-                resp.put("signature", Base64.getEncoder().encodeToString(handshake.signature));
-                resp.put("expires_at", handshake.expiresAtEpochMs);
-                resp.put("session_id", handshake.sessionId);
-                resp.put("identity_public_key", Base64.getEncoder().encodeToString(ServerScoreCrypto.serverIdentityPublicKey.getEncoded()));
-
-                logger.info("Created SECURE score token {} with mutual key binding handshake for user {} on beatmap {}",
-                        tokenId, user.id, beatmapId);
-                ctx.status(200).json(resp);
-                return;
-            } catch (Exception ex) {
-                logger.warn("Handshake generation error: {}", ex.getMessage());
-            }
-        }
-
         logger.info("Created score token {} for user {} on beatmap {} (mode: {})", tokenId, user.id, beatmapId, rulesetId);
         ctx.status(200).json(Map.of("id", tokenId));
-    }
-
-    public void handleHandshake(@NotNull Context ctx) {
-        User user = authenticate(ctx);
-        if (user == null) {
-            ctx.status(401).json(Map.of("error", "Unauthorized"));
-            return;
-        }
-
-        int beatmapId;
-        long token;
-        try {
-            beatmapId = Integer.parseInt(ctx.pathParam("beatmap_id"));
-            token = Long.parseLong(ctx.pathParam("token"));
-        } catch (NumberFormatException e) {
-            ctx.status(400).json(Map.of("error", "Invalid path parameters"));
-            return;
-        }
-
-        ScoreTokenInfo tokenInfo = scoreTokens.get(token);
-        if (tokenInfo == null || tokenInfo.userId != user.id || tokenInfo.beatmapId != beatmapId) {
-            ctx.status(404).json(Map.of("error", "Score token not found or invalid"));
-            return;
-        }
-
-        String clientKeyStr = ctx.formParam("client_public_key");
-        String anticheatVersion = ctx.formParam("anticheat_version");
-        if (clientKeyStr == null || clientKeyStr.isBlank()) {
-            try {
-                Map<String, Object> body = MAPPER.readValue(ctx.body(), Map.class);
-                clientKeyStr = (String) body.get("client_public_key");
-                if (anticheatVersion == null && body.get("anticheat_version") instanceof String v) anticheatVersion = v;
-            } catch (Exception ignored) {}
-        }
-
-        if (clientKeyStr == null || clientKeyStr.isBlank()) {
-            ctx.status(400).json(Map.of("error", "Missing client_public_key"));
-            return;
-        }
-
-        try {
-            byte[] clientPub = Base64.getDecoder().decode(clientKeyStr.trim());
-            var handshake = ServerScoreCrypto.createHandshake(token, clientPub, 120000L);
-            tokenInfo.sessionKey = handshake.sessionKey;
-            tokenInfo.serverChallenge = handshake.serverChallenge;
-            AnticheatLogger.clientConnected(user, anticheatVersion, beatmapId);
-
-            Map<String, Object> resp = new LinkedHashMap<>();
-            resp.put("id", token);
-            resp.put("server_public_key", Base64.getEncoder().encodeToString(handshake.serverEphemeralPublicKey));
-            resp.put("server_challenge", Base64.getEncoder().encodeToString(handshake.serverChallenge));
-            resp.put("signature", Base64.getEncoder().encodeToString(handshake.signature));
-            resp.put("expires_at", handshake.expiresAtEpochMs);
-            resp.put("session_id", handshake.sessionId);
-            resp.put("identity_public_key", Base64.getEncoder().encodeToString(ServerScoreCrypto.serverIdentityPublicKey.getEncoded()));
-
-            logger.info("Handshake completed for score token {} (user {})", token, user.id);
-            ctx.status(200).json(resp);
-        } catch (Exception e) {
-            logger.error("Handshake failed: {}", e.getMessage());
-            ctx.status(400).json(Map.of("error", "Handshake failed: " + e.getMessage()));
-        }
     }
 
     @SuppressWarnings("unchecked")
@@ -243,19 +143,9 @@ public class SoloScoreHandler {
         ScoreTokenInfo tokenInfo = scoreTokens.get(token);
 
         // Idempotency: return cached response if already submitted
-        if (tokenInfo != null && tokenInfo.state == ServerFencingToken.State.SUBMITTED && tokenInfo.cachedResponse != null) {
+        if (tokenInfo != null && tokenInfo.submitted && tokenInfo.cachedResponse != null) {
             logger.info("Idempotent replay: returning cached response for score token {}", token);
             ctx.status(200).json(tokenInfo.cachedResponse);
-            return;
-        }
-
-        if (tokenInfo != null && tokenInfo.state == ServerFencingToken.State.REJECTED_EXHAUSTED) {
-            ctx.status(400).json(Map.of("error", "ERR_CRYPTO_VERIFICATION_FAILED: Token crypto retry limit exhausted", "code", "ERR_CRYPTO_VERIFICATION_FAILED"));
-            return;
-        }
-
-        if (tokenInfo != null && tokenInfo.state == ServerFencingToken.State.REJECTED_FATAL) {
-            ctx.status(422).json(Map.of("error", "INVALID_REPLAY_PHYSICS: Score rejected due to fatal contradiction", "code", "INVALID_REPLAY_PHYSICS"));
             return;
         }
 
@@ -266,57 +156,19 @@ public class SoloScoreHandler {
             return;
         }
 
-        // Fencing Token: check and bump lease
         synchronized (tokenInfo) {
             long now = System.currentTimeMillis();
-            if (tokenInfo.state == ServerFencingToken.State.PROCESSING && now < tokenInfo.leaseExpirationEpochMs) {
-                logger.warn("Rejecting score submission: token {} locked by active processing lease", token);
-                ctx.status(409).json(Map.of("error", "Token is currently locked by another active processing lease"));
+            if (now < tokenInfo.processingUntilEpochMs) {
+                logger.warn("Rejecting score submission: token {} is already being processed", token);
+                ctx.status(409).json(Map.of("error", "Score token is already being processed"));
                 return;
             }
-            tokenInfo.fencingEpoch++;
-            tokenInfo.leaseExpirationEpochMs = now + 15000L;
-            tokenInfo.state = ServerFencingToken.State.PROCESSING;
+            tokenInfo.processingUntilEpochMs = now + 15000L;
         }
 
         Map<String, Object> body;
         try {
-            Map<String, Object> rawMap = MAPPER.readValue(ctx.body(), Map.class);
-            if (rawMap.containsKey("encrypted") && Boolean.TRUE.equals(rawMap.get("encrypted"))) {
-                if (tokenInfo.sessionKey == null) {
-                    ctx.status(400).json(Map.of("error", "Token has no negotiated session key", "code", "ERR_CRYPTO_VERIFICATION_FAILED"));
-                    return;
-                }
-                String nonceStr = (String) rawMap.get("nonce");
-                String tagStr = (String) rawMap.get("tag");
-                String ciphertextStr = (String) rawMap.get("ciphertext");
-                long epoch = ((Number) rawMap.getOrDefault("epoch", System.currentTimeMillis())).longValue();
-
-                byte[] nonce = Base64.getDecoder().decode(nonceStr);
-                byte[] tag = Base64.getDecoder().decode(tagStr);
-                byte[] ciphertext = Base64.getDecoder().decode(ciphertextStr);
-                byte[] aad = ServerScoreCrypto.buildAad(token, beatmapId, user.id, epoch);
-
-                try {
-                    byte[] decrypted = ServerScoreCrypto.decryptAead(tokenInfo.sessionKey, nonce, tag, ciphertext, aad);
-                    body = MAPPER.readValue(decrypted, Map.class);
-                    logger.info("Successfully decrypted AEAD score payload for token {} (user {})", token, user.id);
-                } catch (Exception e) {
-                    logger.warn("AEAD Tag verification failed for token {}: {}", token, e.getMessage());
-                    tokenInfo.failedAttempts++;
-                    if (tokenInfo.failedAttempts >= 2) {
-                        tokenInfo.state = ServerFencingToken.State.REJECTED_EXHAUSTED;
-                        ctx.status(400).json(Map.of("error", "ERR_CRYPTO_VERIFICATION_FAILED: Tag verification failed (Limit exhausted)", "code", "ERR_CRYPTO_VERIFICATION_FAILED"));
-                    } else {
-                        tokenInfo.state = ServerFencingToken.State.PENDING;
-                        tokenInfo.leaseExpirationEpochMs = 0;
-                        ctx.status(400).json(Map.of("error", "ERR_CRYPTO_VERIFICATION_FAILED: Tag verification failed", "code", "ERR_CRYPTO_VERIFICATION_FAILED", "retry_eligible", true));
-                    }
-                    return;
-                }
-            } else {
-                body = rawMap;
-            }
+            body = MAPPER.readValue(ctx.body(), Map.class);
         } catch (Exception e) {
             logger.error("Failed to parse score submission JSON: {}", e.getMessage());
             ctx.status(400).json(Map.of("error", "Malformed score submission body"));
@@ -509,7 +361,7 @@ public class SoloScoreHandler {
         }
         response.put("beatmap", bm);
 
-        tokenInfo.state = ServerFencingToken.State.SUBMITTED;
+        tokenInfo.submitted = true;
         tokenInfo.cachedResponse = response;
 
         logger.info("Score {} submitted successfully for user {} on beatmap {}: score={}, pp={}, rank={}",

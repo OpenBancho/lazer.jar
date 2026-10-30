@@ -1561,10 +1561,12 @@ public class DatabaseManager {
                 "id BIGINT AUTO_INCREMENT PRIMARY KEY, " +
                 "user_id INT NOT NULL, " +
                 "username VARCHAR(64) NOT NULL, " +
-                "ip VARCHAR(45) NOT NULL, " +
+                "ip VARCHAR(45) NOT NULL DEFAULT '', " +
                 "code VARCHAR(32) NOT NULL, " +
                 "reason VARCHAR(1024) NOT NULL, " +
                 "client_version VARCHAR(64), " +
+                "hint VARCHAR(512), " +
+                "source VARCHAR(64), " +
                 "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, " +
                 "INDEX idx_flag_user (user_id), " +
                 "INDEX idx_flag_code (code)" +
@@ -1572,22 +1574,33 @@ public class DatabaseManager {
         try (Connection conn = getConnection();
              Statement stmt = conn.createStatement()) {
             stmt.executeUpdate(sql);
+
+            // Tables created by earlier versions lack the columns used by the API-driven flow.
+            for (String column : new String[] {"hint VARCHAR(512)", "source VARCHAR(64)"}) {
+                String name = column.substring(0, column.indexOf(' '));
+                try (ResultSet rs = conn.getMetaData().getColumns(null, null, "anticheat_flags", name)) {
+                    if (!rs.next()) {
+                        stmt.executeUpdate("ALTER TABLE anticheat_flags ADD COLUMN " + column);
+                    }
+                }
+            }
+            stmt.executeUpdate("ALTER TABLE anticheat_flags MODIFY ip VARCHAR(45) NOT NULL DEFAULT ''");
             logger.info("anticheat_flags table verified.");
         } catch (Exception e) {
             logger.warn("Could not check/create anticheat_flags table: {}", e.getMessage());
         }
     }
 
-    public boolean saveAnticheatFlag(int userId, String username, String ip, String code, String reason, String clientVersion) {
-        String sql = "INSERT INTO anticheat_flags (user_id, username, ip, code, reason, client_version) VALUES (?, ?, ?, ?, ?, ?)";
+    public boolean saveAnticheatFlag(int userId, String username, String code, String summary, String hint, String source) {
+        String sql = "INSERT INTO anticheat_flags (user_id, username, code, reason, hint, source) VALUES (?, ?, ?, ?, ?, ?)";
         try (Connection conn = getConnection();
              PreparedStatement stmt = conn.prepareStatement(sql)) {
             stmt.setInt(1, userId);
             stmt.setString(2, username != null ? username : "");
-            stmt.setString(3, ip != null ? ip : "");
-            stmt.setString(4, code);
-            stmt.setString(5, reason);
-            stmt.setString(6, clientVersion);
+            stmt.setString(3, code);
+            stmt.setString(4, summary);
+            stmt.setString(5, hint);
+            stmt.setString(6, source);
             stmt.executeUpdate();
             return true;
         } catch (SQLException e) {
