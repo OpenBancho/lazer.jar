@@ -23,7 +23,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class AnticheatReportHandler {
     private static final Logger logger = LoggerFactory.getLogger(AnticheatReportHandler.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
-    private static final Set<String> KNOWN_CODES = Set.of("image_tamper", "violation");
+    private static final Set<String> KNOWN_CODES = Set.of("image_tamper", "cheat_signature", "violation");
     private static final long MIN_INTERVAL_MS = 10_000L;
 
     private final AuthService authService;
