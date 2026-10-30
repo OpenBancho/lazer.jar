@@ -19,10 +19,13 @@ public class OAuthHandler implements Handler {
 
     private final AuthService authService;
     private final com.osuserverlist.lazer.telemetry.TelemetryManager telemetryManager;
+    private final com.osuserverlist.lazer.anticheat.LoginTicketVerifier ticketVerifier;
 
-    public OAuthHandler(AuthService authService, com.osuserverlist.lazer.telemetry.TelemetryManager telemetryManager) {
+    public OAuthHandler(AuthService authService, com.osuserverlist.lazer.telemetry.TelemetryManager telemetryManager,
+                        com.osuserverlist.lazer.anticheat.LoginTicketVerifier ticketVerifier) {
         this.authService = authService;
         this.telemetryManager = telemetryManager;
+        this.ticketVerifier = ticketVerifier;
     }
 
     @Override
@@ -33,6 +36,15 @@ public class OAuthHandler implements Handler {
         String refreshToken = ctx.formParam("refresh_token");
         String scope = ctx.formParam("scope");
         String fingerprint = ctx.formParam("fingerprint");
+        String acTicket = ctx.formParam("ac_ticket");
+        // The strict client announces itself; the non-strict client does not talk to the anti-cheat at all.
+        String acMode = ctx.formParam("ac_mode");
+        if (acMode == null || acMode.isBlank()) {
+            acMode = ctx.header("X-AC-Mode");
+        }
+        if (acTicket == null || acTicket.isBlank()) {
+            acTicket = ctx.header("X-AC-Ticket");
+        }
         if (fingerprint == null || fingerprint.isBlank()) {
             fingerprint = ctx.formParam("telemetry");
         }
@@ -49,6 +61,8 @@ public class OAuthHandler implements Handler {
                 if (json.has("password")) password = json.get("password").asText();
                 if (json.has("refresh_token")) refreshToken = json.get("refresh_token").asText();
                 if (json.has("scope")) scope = json.get("scope").asText();
+                if (json.has("ac_ticket") && (acTicket == null || acTicket.isBlank())) acTicket = json.get("ac_ticket").asText();
+                if (json.has("ac_mode") && (acMode == null || acMode.isBlank())) acMode = json.get("ac_mode").asText();
                 if (json.has("fingerprint") && (fingerprint == null || fingerprint.isBlank())) {
                     fingerprint = json.get("fingerprint").asText();
                 }
@@ -67,6 +81,18 @@ public class OAuthHandler implements Handler {
             clientIp = ctx.ip();
         } else {
             clientIp = clientIp.split(",")[0].trim();
+        }
+
+        if (ticketVerifier.isRequired() && "strict".equalsIgnoreCase(acMode)
+                && ("password".equalsIgnoreCase(grantType) || "refresh_token".equalsIgnoreCase(grantType))) {
+            String problem = ticketVerifier.check(acTicket, "password".equalsIgnoreCase(grantType) ? username : null);
+            if (problem != null) {
+                logger.warn("Login rejected (anti-cheat ticket: {}) grant={} user={} ip={}", problem, grantType, username, clientIp);
+                sendError(ctx, 403, "anticheat_required",
+                        "The anti-cheat is required to log in. Use the official client with anticheat.dll.",
+                        "Anti-cheat required: use the official client with anticheat.dll.");
+                return;
+            }
         }
 
         if ("password".equalsIgnoreCase(grantType)) {
@@ -131,10 +157,15 @@ public class OAuthHandler implements Handler {
     }
 
     private void sendError(Context ctx, int status, String error, String message) {
+        sendError(ctx, status, error, message, null);
+    }
+
+    private void sendError(Context ctx, int status, String error, String message, String hint) {
         Map<String, Object> resp = new LinkedHashMap<>();
         resp.put("error", error);
         resp.put("message", message);
         resp.put("error_description", message);
+        if (hint != null) resp.put("hint", hint);
 
         ctx.status(status);
         ctx.contentType("application/json");

@@ -167,7 +167,7 @@ public class ScoreSignatureTracker {
         }
     }
 
-    private static PublicKey parseKey(String base64) {
+    static PublicKey parseKey(String base64) {
         if (base64 == null || base64.isBlank()) return null;
 
         try {
