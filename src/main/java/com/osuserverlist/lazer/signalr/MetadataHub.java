@@ -38,6 +38,7 @@ public class MetadataHub {
     private final OnlineManager onlineManager;
 
     private final Map<String, ClientSession> sessions = new ConcurrentHashMap<>();
+    private final Map<Integer, Value> userActivities = new ConcurrentHashMap<>();
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
 
     public static class ClientSession {
@@ -105,6 +106,17 @@ public class MetadataHub {
     private void onClose(WsCloseContext ctx) {
         ClientSession session = sessions.remove(ctx.sessionId());
         if (session != null && session.userId > 0) {
+            boolean stillConnected = false;
+            for (ClientSession s : sessions.values()) {
+                if (s.userId == session.userId) {
+                    stillConnected = true;
+                    break;
+                }
+            }
+            if (!stillConnected) {
+                userActivities.remove(session.userId);
+                broadcastUserPresence(session.userId, 0); // 0 = Offline
+            }
             logger.info("User {} disconnected from MetadataHub [{}]", session.userId, ctx.sessionId());
         }
     }
@@ -264,6 +276,14 @@ public class MetadataHub {
         if ("UpdateActivity".equalsIgnoreCase(target)) {
             if (argCount > 0 && unpacker.hasNext()) {
                 Value val = unpacker.unpackValue();
+                if (session.userId > 0) {
+                    if (val == null || val.isNilValue()) {
+                        userActivities.remove(session.userId);
+                    } else {
+                        userActivities.put(session.userId, val);
+                    }
+                    broadcastUserPresence(session.userId, session.currentStatus);
+                }
             }
             if (invocationId != null) {
                 sendVoidCompletion(session, invocationId);
@@ -275,6 +295,9 @@ public class MetadataHub {
             if (argCount > 0 && unpacker.hasNext()) {
                 try {
                     session.currentStatus = unpacker.unpackInt();
+                    if (session.userId > 0) {
+                        broadcastUserPresence(session.userId, session.currentStatus);
+                    }
                 } catch (Exception ignored) {}
             }
             if (invocationId != null) {
@@ -294,6 +317,14 @@ public class MetadataHub {
         // Default: void completion
         if (invocationId != null) {
             sendVoidCompletion(session, invocationId);
+        }
+    }
+
+    public void broadcastUserPresence(int userId, int status) {
+        for (ClientSession session : sessions.values()) {
+            if (session.watchingPresence && session.handshaken) {
+                sendUserPresence(session, userId, status);
+            }
         }
     }
 
@@ -324,7 +355,7 @@ public class MetadataHub {
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             MessagePacker packer = MessagePack.newDefaultPacker(baos);
 
-            // Invocation: [1, {}, null, "UserPresenceUpdated", [userId, [null, status]]]
+            // Invocation: [1, {}, null, "UserPresenceUpdated", [userId, [activity, status]]]
             packer.packArrayHeader(5);
             packer.packInt(1);
             packer.packMapHeader(0);
@@ -334,13 +365,18 @@ public class MetadataHub {
             packer.packArrayHeader(2);
             packer.packInt(userId);
 
-            // UserPresence struct: [Activity (null), Status (status)]
+            // UserPresence struct: [Activity, Status]
             if (status <= 0) {
                 packer.packNil();
             } else {
                 packer.packArrayHeader(2);
-                packer.packNil(); // Activity = null
-                packer.packInt(status); // Status
+                Value act = userActivities.get(userId);
+                if (act != null && !act.isNilValue()) {
+                    packer.packValue(act);
+                } else {
+                    packer.packNil();
+                }
+                packer.packInt(status);
             }
 
             packer.close();
@@ -369,7 +405,12 @@ public class MetadataHub {
                 packer.packNil();
             } else {
                 packer.packArrayHeader(2);
-                packer.packNil();
+                Value act = userActivities.get(friendId);
+                if (act != null && !act.isNilValue()) {
+                    packer.packValue(act);
+                } else {
+                    packer.packNil();
+                }
                 packer.packInt(status);
             }
 

@@ -40,9 +40,11 @@ public class SpectatorHub {
     private final OnlineManager onlineManager;
 
     private final Map<String, ClientSession> sessions = new ConcurrentHashMap<>();
+    private final Map<Integer, Set<ClientSession>> userSessions = new ConcurrentHashMap<>();
     private final Map<Integer, Set<ClientSession>> userWatchers = new ConcurrentHashMap<>();
     private final Map<String, Set<Integer>> sessionWatchedUsers = new ConcurrentHashMap<>();
     private final Map<Integer, Value> activeUserStates = new ConcurrentHashMap<>();
+    private final Map<Integer, List<Value>> activeUserFrameBundles = new ConcurrentHashMap<>();
 
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
 
@@ -111,6 +113,7 @@ public class SpectatorHub {
         sessions.put(ctx.sessionId(), session);
 
         if (userId > 0) {
+            userSessions.computeIfAbsent(userId, k -> ConcurrentHashMap.newKeySet()).add(session);
             onlineManager.markUserActive(userId);
             logger.info("User {} connected to SpectatorHub [{}]", userId, ctx.sessionId());
         }
@@ -119,7 +122,15 @@ public class SpectatorHub {
     private void onClose(WsCloseContext ctx) {
         ClientSession session = sessions.remove(ctx.sessionId());
         if (session != null) {
-            // Remove watchers registered by this session
+            if (session.userId > 0) {
+                Set<ClientSession> uSet = userSessions.get(session.userId);
+                if (uSet != null) {
+                    uSet.remove(session);
+                    if (uSet.isEmpty()) userSessions.remove(session.userId);
+                }
+            }
+
+            // Remove watchers registered by this session and notify targets
             Set<Integer> watched = sessionWatchedUsers.remove(ctx.sessionId());
             if (watched != null) {
                 for (int targetId : watched) {
@@ -130,12 +141,23 @@ public class SpectatorHub {
                             userWatchers.remove(targetId);
                         }
                     }
+                    if (session.userId > 0) {
+                        notifyUserEndedWatching(targetId, session.userId);
+                    }
                 }
             }
 
             // Remove any session from userWatchers if matching
             for (Set<ClientSession> set : userWatchers.values()) {
                 set.remove(session);
+            }
+
+            // If the user was playing and disconnected abruptly, broadcast Quit
+            if (session.userId > 0 && activeUserStates.containsKey(session.userId)) {
+                Value existingState = activeUserStates.remove(session.userId);
+                activeUserFrameBundles.remove(session.userId);
+                Value quitState = createModifiedSpectatorState(existingState, 4); // 4 = Quit
+                broadcastUserFinishedPlaying(session.userId, quitState);
             }
 
             if (session.userId > 0) {
@@ -303,6 +325,7 @@ public class SpectatorHub {
 
         if (session.userId > 0 && stateVal != null) {
             activeUserStates.put(session.userId, stateVal);
+            activeUserFrameBundles.put(session.userId, Collections.synchronizedList(new ArrayList<>()));
             logger.info("User {} began playing in SpectatorHub", session.userId);
 
             // Broadcast UserBeganPlaying to all watchers
@@ -331,6 +354,12 @@ public class SpectatorHub {
         }
 
         if (session.userId > 0 && bundleVal != null) {
+            List<Value> frames = activeUserFrameBundles.get(session.userId);
+            if (frames != null) {
+                if (frames.size() < 10000) {
+                    frames.add(bundleVal);
+                }
+            }
             broadcastUserSentFrames(session.userId, bundleVal);
         }
 
@@ -370,6 +399,7 @@ public class SpectatorHub {
                 broadcastUserFinishedPlaying(session.userId, finalStateValue);
             }
             activeUserStates.remove(session.userId);
+            activeUserFrameBundles.remove(session.userId);
             logger.info("User {} finished playing in SpectatorHub", session.userId);
         }
 
@@ -391,12 +421,26 @@ public class SpectatorHub {
             userWatchers.computeIfAbsent(targetUserId, k -> ConcurrentHashMap.newKeySet()).add(session);
             sessionWatchedUsers.computeIfAbsent(session.sessionId, k -> ConcurrentHashMap.newKeySet()).add(targetUserId);
 
-            logger.debug("Session {} (user {}) started watching user {}", session.sessionId, session.userId, targetUserId);
+            logger.info("Session {} (user {}) started watching user {}", session.sessionId, session.userId, targetUserId);
+
+            if (session.userId > 0) {
+                notifyUserStartedWatching(targetUserId, session.userId);
+            }
 
             // If target user is already actively playing, immediately inform this watcher
             Value currentState = activeUserStates.get(targetUserId);
             if (currentState != null) {
                 sendUserBeganPlaying(session, targetUserId, currentState);
+
+                List<Value> buffered = activeUserFrameBundles.get(targetUserId);
+                if (buffered != null) {
+                    synchronized (buffered) {
+                        for (Value bVal : buffered) {
+                            byte[] payload = buildHubInvocationMessage("UserSentFrames", targetUserId, bVal);
+                            session.sendBinary(payload);
+                        }
+                    }
+                }
             }
         }
 
@@ -427,7 +471,12 @@ public class SpectatorHub {
             if (watched != null) {
                 watched.remove(targetUserId);
             }
-            logger.debug("Session {} (user {}) stopped watching user {}", session.sessionId, session.userId, targetUserId);
+
+            if (session.userId > 0) {
+                notifyUserEndedWatching(targetUserId, session.userId);
+            }
+
+            logger.info("Session {} (user {}) stopped watching user {}", session.sessionId, session.userId, targetUserId);
         }
 
         if (invocationId != null) {
@@ -505,6 +554,73 @@ public class SpectatorHub {
             }
         } catch (Exception e) {
             logger.debug("Failed to broadcast UserScoreProcessed: {}", e.getMessage());
+        }
+    }
+
+    public void notifyUserStartedWatching(int targetUserId, int watcherUserId) {
+        if (targetUserId <= 0 || watcherUserId <= 0) return;
+        Set<ClientSession> targetSessions = userSessions.get(targetUserId);
+        if (targetSessions == null || targetSessions.isEmpty()) return;
+
+        String watcherName = "User " + watcherUserId;
+        try {
+            var u = databaseManager.findUserById(watcherUserId);
+            if (u != null && u.name != null) watcherName = u.name;
+        } catch (Exception ignored) {}
+
+        try {
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            MessagePacker packer = MessagePack.newDefaultPacker(baos);
+
+            // [1, {}, null, "UserStartedWatching", [ [ [watcherUserId, watcherName] ] ]]
+            packer.packArrayHeader(5);
+            packer.packInt(1);
+            packer.packMapHeader(0);
+            packer.packNil();
+            packer.packString("UserStartedWatching");
+
+            packer.packArrayHeader(1); // SpectatorUser[]
+            packer.packArrayHeader(1); // 1 item
+            packer.packArrayHeader(2); // SpectatorUser struct: [OnlineID, Username]
+            packer.packInt(watcherUserId);
+            packer.packString(watcherName);
+            packer.close();
+
+            byte[] msg = encodeLengthPrefixed(baos.toByteArray());
+            for (ClientSession target : targetSessions) {
+                target.sendBinary(msg);
+            }
+        } catch (Exception e) {
+            logger.debug("Failed to notify UserStartedWatching: {}", e.getMessage());
+        }
+    }
+
+    public void notifyUserEndedWatching(int targetUserId, int watcherUserId) {
+        if (targetUserId <= 0 || watcherUserId <= 0) return;
+        Set<ClientSession> targetSessions = userSessions.get(targetUserId);
+        if (targetSessions == null || targetSessions.isEmpty()) return;
+
+        try {
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            MessagePacker packer = MessagePack.newDefaultPacker(baos);
+
+            // [1, {}, null, "UserEndedWatching", [watcherUserId]]
+            packer.packArrayHeader(5);
+            packer.packInt(1);
+            packer.packMapHeader(0);
+            packer.packNil();
+            packer.packString("UserEndedWatching");
+
+            packer.packArrayHeader(1);
+            packer.packInt(watcherUserId);
+            packer.close();
+
+            byte[] msg = encodeLengthPrefixed(baos.toByteArray());
+            for (ClientSession target : targetSessions) {
+                target.sendBinary(msg);
+            }
+        } catch (Exception e) {
+            logger.debug("Failed to notify UserEndedWatching: {}", e.getMessage());
         }
     }
 
