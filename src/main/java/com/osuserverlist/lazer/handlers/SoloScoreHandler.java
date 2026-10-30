@@ -2,6 +2,7 @@ package com.osuserverlist.lazer.handlers;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.osuserverlist.lazer.anticheat.ScoreAntiCheat;
+import com.osuserverlist.lazer.anticheat.AnticheatLogger;
 import com.osuserverlist.lazer.anticheat.ServerFencingToken;
 import com.osuserverlist.lazer.anticheat.ServerScoreCrypto;
 import com.osuserverlist.lazer.auth.AuthService;
@@ -135,6 +136,7 @@ public class SoloScoreHandler {
                 var handshake = ServerScoreCrypto.createHandshake(tokenId, clientPub, 120000L);
                 tokenInfo.sessionKey = handshake.sessionKey;
                 tokenInfo.serverChallenge = handshake.serverChallenge;
+                AnticheatLogger.clientConnected(user, null, beatmapId);
 
                 Map<String, Object> resp = new LinkedHashMap<>();
                 resp.put("id", tokenId);
@@ -182,10 +184,12 @@ public class SoloScoreHandler {
         }
 
         String clientKeyStr = ctx.formParam("client_public_key");
+        String anticheatVersion = ctx.formParam("anticheat_version");
         if (clientKeyStr == null || clientKeyStr.isBlank()) {
             try {
                 Map<String, Object> body = MAPPER.readValue(ctx.body(), Map.class);
                 clientKeyStr = (String) body.get("client_public_key");
+                if (anticheatVersion == null && body.get("anticheat_version") instanceof String v) anticheatVersion = v;
             } catch (Exception ignored) {}
         }
 
@@ -199,6 +203,7 @@ public class SoloScoreHandler {
             var handshake = ServerScoreCrypto.createHandshake(token, clientPub, 120000L);
             tokenInfo.sessionKey = handshake.sessionKey;
             tokenInfo.serverChallenge = handshake.serverChallenge;
+            AnticheatLogger.clientConnected(user, anticheatVersion, beatmapId);
 
             Map<String, Object> resp = new LinkedHashMap<>();
             resp.put("id", token);

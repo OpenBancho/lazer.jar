@@ -1,5 +1,6 @@
 package com.osuserverlist.lazer;
 
+import com.osuserverlist.lazer.anticheat.AnticheatLogger;
 import com.osuserverlist.lazer.auth.AuthService;
 import com.osuserverlist.lazer.auth.TokenStore;
 import com.osuserverlist.lazer.config.ServerConfig;
@@ -309,5 +310,9 @@ public class App {
 
         app.start(config.port);
         logger.info("lazer.jar started successfully on port {}", config.port);
+
+        AnticheatLogger.init(config);
+        AnticheatLogger.serverStarted();
+        Runtime.getRuntime().addShutdownHook(new Thread(AnticheatLogger::serverStopped, "anticheat-log-shutdown"));
     }
 }
