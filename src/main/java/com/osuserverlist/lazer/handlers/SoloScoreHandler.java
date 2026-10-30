@@ -39,6 +39,8 @@ public class SoloScoreHandler {
         public final int rulesetId;
         public final String beatmapHash;
         public final long createdAtEpochMs;
+        // Created by the strict client (anti-cheat build): its score is expected to be confirmed by the anti-cheat server.
+        public volatile boolean strict = false;
 
         // Duplicate-request guard: a retry of an accepted submission gets the cached response back.
         public volatile boolean submitted = false;
@@ -119,6 +121,7 @@ public class SoloScoreHandler {
 
         long tokenId = Math.abs(RANDOM.nextLong() % 9000000000L) + 1000000000L;
         ScoreTokenInfo tokenInfo = new ScoreTokenInfo(tokenId, user.id, beatmapId, rulesetId, beatmapHash);
+        tokenInfo.strict = "strict".equalsIgnoreCase(ctx.header("X-AC-Mode"));
         scoreTokens.put(tokenId, tokenInfo);
 
         logger.info("Created score token {} for user {} on beatmap {} (mode: {})", tokenId, user.id, beatmapId, rulesetId);
@@ -367,7 +370,9 @@ public class SoloScoreHandler {
         tokenInfo.submitted = true;
 
         // The score is already saved; the anti-cheat server confirms it separately (a flag is raised if it does not).
-        signatureTracker.scoreSaved(token, user.id, user.name, beatmapId, totalScore, maxCombo, sc.id);
+        if (tokenInfo.strict) {
+            signatureTracker.scoreSaved(token, user.id, user.name, beatmapId, totalScore, maxCombo, sc.id);
+        }
         tokenInfo.cachedResponse = response;
 
         logger.info("Score {} submitted successfully for user {} on beatmap {}: score={}, pp={}, rank={}",

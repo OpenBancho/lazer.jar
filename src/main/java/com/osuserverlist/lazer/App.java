@@ -43,7 +43,9 @@ public class App {
         AuthService authService = new AuthService(databaseManager, tokenStore);
 
         com.osuserverlist.lazer.telemetry.TelemetryManager telemetryManager = new com.osuserverlist.lazer.telemetry.TelemetryManager(config, databaseManager);
-        OAuthHandler oauthHandler = new OAuthHandler(authService, telemetryManager);
+        com.osuserverlist.lazer.anticheat.LoginTicketVerifier loginTicketVerifier =
+                new com.osuserverlist.lazer.anticheat.LoginTicketVerifier(config.acSigningPublicKey, config.acRequireLoginTicket);
+        OAuthHandler oauthHandler = new OAuthHandler(authService, telemetryManager, loginTicketVerifier);
         MeHandler meHandler = new MeHandler(authService, databaseManager, config);
         UserHandler userHandler = new UserHandler(databaseManager, onlineManager, config);
         UserScoresHandler userScoresHandler = new UserScoresHandler(databaseManager, config);

@@ -51,6 +51,7 @@ public class ServerConfig {
         this.acWebhookFlags = dotenv.get("AC_WEBHOOK_FLAGS", "");
         this.acApiKeys = dotenv.get("AC_API_KEYS", "");
         this.acSigningPublicKey = dotenv.get("AC_SIGNING_PUBLIC_KEY", "");
+        this.acRequireLoginTicket = "true".equalsIgnoreCase(dotenv.get("AC_REQUIRE_LOGIN_TICKET", "false"));
         this.acSignatureTimeoutSeconds = Integer.parseInt(dotenv.get("AC_SIGNATURE_TIMEOUT_SECONDS", "120"));
     }
 
@@ -68,5 +69,7 @@ public class ServerConfig {
     public final String acApiKeys;
     // Ed25519 public key (base64) of the anti-cheat server; scores must be confirmed with its signature.
     public final String acSigningPublicKey;
+    // Players must present a login ticket from the anti-cheat server (i.e. run anticheat.dll) to log in.
+    public final boolean acRequireLoginTicket;
     public final int acSignatureTimeoutSeconds;
 }
