@@ -48,9 +48,8 @@ public class ServerConfig {
         this.discordWebhookUrl = dotenv.get("DISCORD_WEBHOOK_URL", "");
         this.hmacSecret = dotenv.get("HMAC_SECRET", "default_lazer_secret_key");
 
-        this.acWebhookSystem = dotenv.get("AC_WEBHOOK_SYSTEM", "");
-        this.acWebhookClients = dotenv.get("AC_WEBHOOK_CLIENTS", "");
         this.acWebhookFlags = dotenv.get("AC_WEBHOOK_FLAGS", "");
+        this.acApiKeys = dotenv.get("AC_API_KEYS", "");
     }
 
     public final String osuApiKey;
@@ -61,8 +60,8 @@ public class ServerConfig {
     public final String discordWebhookUrl;
     public final String hmacSecret;
 
-    // Anti-cheat log webhooks (one per Discord channel); empty = channel disabled.
-    public final String acWebhookSystem;
-    public final String acWebhookClients;
+    // Anti-cheat backend integration: flags arrive over the API (AC_API_KEYS = name:key,name2:key2)
+    // and are logged to this webhook.
     public final String acWebhookFlags;
+    public final String acApiKeys;
 }
