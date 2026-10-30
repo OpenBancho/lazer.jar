@@ -147,6 +147,8 @@ public class App {
             javalinConfig.routes.get("/web/osu-search.php", beatmapHandler::handleLegacySearch);
             javalinConfig.routes.get("/web/osu-search-set.php", beatmapHandler::handleLegacySearchSet);
             javalinConfig.routes.post("/api/v2/beatmaps/{beatmap_id}/solo/scores", soloScoreHandler::handleCreateScoreToken);
+            javalinConfig.routes.post("/api/v2/beatmaps/{beatmap_id}/solo/scores/{token}/handshake", soloScoreHandler::handleHandshake);
+            javalinConfig.routes.post("/api/v2/beatmaps/{beatmap_id}/solo/scores/handshake", soloScoreHandler::handleHandshake);
             javalinConfig.routes.put("/api/v2/beatmaps/{beatmap_id}/solo/scores/{token}", soloScoreHandler::handleSubmitScore);
             javalinConfig.routes.post("/api/v2/beatmaps/{beatmap_id}/solo/scores/{token}", soloScoreHandler::handleSubmitScore);
             javalinConfig.routes.get("/api/v2/beatmaps/{beatmap_id}/scores", soloScoreHandler::handleGetBeatmapScores);
