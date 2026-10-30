@@ -50,6 +50,8 @@ public class ServerConfig {
 
         this.acWebhookFlags = dotenv.get("AC_WEBHOOK_FLAGS", "");
         this.acApiKeys = dotenv.get("AC_API_KEYS", "");
+        this.acSigningPublicKey = dotenv.get("AC_SIGNING_PUBLIC_KEY", "");
+        this.acSignatureTimeoutSeconds = Integer.parseInt(dotenv.get("AC_SIGNATURE_TIMEOUT_SECONDS", "120"));
     }
 
     public final String osuApiKey;
@@ -64,4 +66,7 @@ public class ServerConfig {
     // and are logged to this webhook.
     public final String acWebhookFlags;
     public final String acApiKeys;
+    // Ed25519 public key (base64) of the anti-cheat server; scores must be confirmed with its signature.
+    public final String acSigningPublicKey;
+    public final int acSignatureTimeoutSeconds;
 }
