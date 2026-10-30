@@ -59,6 +59,13 @@ public class ServerConfig {
             throw new IllegalStateException("CLIENT_MODE must be 'strict' or 'nonstrict', got '" + clientMode + "'");
         }
         this.strictClient = clientMode.equals("strict");
+        // AC_UNSIGNED_ACTION: flag (default) only records the flag; hide also removes a score that the anti-cheat server
+        // did not confirm (or whose signature is wrong) from the leaderboards.
+        String unsignedAction = dotenv.get("AC_UNSIGNED_ACTION", "flag").trim().toLowerCase();
+        if (!unsignedAction.equals("flag") && !unsignedAction.equals("hide")) {
+            throw new IllegalStateException("AC_UNSIGNED_ACTION must be 'flag' or 'hide', got '" + unsignedAction + "'");
+        }
+        this.hideUnsignedScores = unsignedAction.equals("hide");
         if (this.strictClient && this.acSigningPublicKey.isBlank()) {
             throw new IllegalStateException("CLIENT_MODE=strict requires AC_SIGNING_PUBLIC_KEY (the anti-cheat server's public key)");
         }
@@ -81,5 +88,6 @@ public class ServerConfig {
     public final String acSigningPublicKey;
     // true: strict server (anti-cheat client required), false: nonstrict server (anti-cheat not involved)
     public final boolean strictClient;
+    public final boolean hideUnsignedScores;
     public final int acSignatureTimeoutSeconds;
 }

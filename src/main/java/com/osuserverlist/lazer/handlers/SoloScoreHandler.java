@@ -145,6 +145,9 @@ public class SoloScoreHandler {
 
         ScoreTokenInfo tokenInfo = scoreTokens.get(token);
 
+        // Hash of exactly what the client sent: the anti-cheat server signs the same bytes.
+        String bodySha256 = sha256Hex(ctx.bodyAsBytes());
+
         // Idempotency: return cached response if already submitted
         if (tokenInfo != null && tokenInfo.submitted && tokenInfo.cachedResponse != null) {
             logger.info("Idempotent replay: returning cached response for score token {}", token);
@@ -368,7 +371,7 @@ public class SoloScoreHandler {
 
         // The score is already saved; the anti-cheat server confirms it separately (a flag is raised if it does not).
         if (config.strictClient) {
-            signatureTracker.scoreSaved(token, user.id, user.name, beatmapId, totalScore, maxCombo, sc.id);
+            signatureTracker.scoreSaved(token, user.id, user.name, beatmapId, bodySha256, sc.id);
         }
         tokenInfo.cachedResponse = response;
 
@@ -453,6 +456,14 @@ public class SoloScoreHandler {
             }
         }
         return 0;
+    }
+
+    private static String sha256Hex(byte[] data) {
+        try {
+            return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(data));
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     private long getLong(Map<String, Object> map, String key, long def) {
