@@ -102,7 +102,9 @@ public class App {
                 ctx.contentType("application/json");
                 ctx.json(Map.of(
                         "api_version", 2,
-                        "status", "ok"
+                        "status", "ok",
+                        // Tells clients whether the anti-cheat is used at all (strict) or must stay out of the way (nonstrict).
+                        "client_mode", config.strictClient ? "strict" : "nonstrict"
                 ));
             });
 
