@@ -70,6 +70,10 @@ public class ServerConfig {
             throw new IllegalStateException("CLIENT_MODE=strict requires AC_SIGNING_PUBLIC_KEY (the anti-cheat server's public key)");
         }
         this.acSignatureTimeoutSeconds = Integer.parseInt(dotenv.get("AC_SIGNATURE_TIMEOUT_SECONDS", "120"));
+        // Vouching: this server asks the anti-cheat about a player and vouches for one (see AnticheatVouchHandler).
+        // Both empty = vouching is switched off; nothing else changes.
+        this.acUrl = dotenv.get("AC_URL", "").trim();
+        this.acServerKey = dotenv.get("AC_SERVER_KEY", "").trim();
     }
 
     public final String osuApiKey;
@@ -90,4 +94,7 @@ public class ServerConfig {
     public final boolean strictClient;
     public final boolean hideUnsignedScores;
     public final int acSignatureTimeoutSeconds;
+    // The anti-cheat server's address and this game server's key there (INTERNAL_API_KEYS of the anti-cheat server).
+    public final String acUrl;
+    public final String acServerKey;
 }
