@@ -32,3 +32,4 @@ desktop.ini
 *.class
 *.jar
 !gradle/wrapper/gradle-wrapper.jar
+/.env.bak*

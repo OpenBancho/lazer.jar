@@ -56,6 +56,7 @@ public class App {
         com.osuserverlist.lazer.signalr.SpectatorHub spectatorHub = new com.osuserverlist.lazer.signalr.SpectatorHub(authService, databaseManager, onlineManager);
         ChatHandler chatHandler = new ChatHandler(authService, databaseManager, onlineManager, config, notificationHub);
         AnticheatFlagHandler anticheatFlagHandler = new AnticheatFlagHandler(config, databaseManager);
+        AnticheatVouchHandler anticheatVouchHandler = new AnticheatVouchHandler(authService, databaseManager, new com.osuserverlist.lazer.anticheat.AnticheatVouchClient(config));
         SoloScoreHandler soloScoreHandler = new SoloScoreHandler(authService, databaseManager, config, spectatorHub, anticheatFlagHandler.signatureTracker());
         BeatmapHandler beatmapHandler = new BeatmapHandler(databaseManager, config);
         RankingsHandler rankingsHandler = new RankingsHandler(databaseManager, config);
@@ -153,6 +154,11 @@ public class App {
             javalinConfig.routes.get("/web/osu-search-set.php", beatmapHandler::handleLegacySearchSet);
             javalinConfig.routes.post("/api/v2/anticheat/flag", anticheatFlagHandler::handleFlag);
             javalinConfig.routes.post("/api/v2/anticheat/signature", anticheatFlagHandler::handleSignature);
+            // Staff of this server vouch for a player the anti-cheat flagged (bearer token of a MODERATOR / ADMINISTRATOR / DEVELOPER).
+            javalinConfig.routes.get("/api/v2/anticheat/vouch/status", anticheatVouchHandler::handleStatus);
+            javalinConfig.routes.get("/api/v2/anticheat/vouches", anticheatVouchHandler::handleList);
+            javalinConfig.routes.post("/api/v2/anticheat/vouch", anticheatVouchHandler::handleVouch);
+            javalinConfig.routes.post("/api/v2/anticheat/vouch/revoke", anticheatVouchHandler::handleRevoke);
             javalinConfig.routes.post("/api/v2/beatmaps/{beatmap_id}/solo/scores", soloScoreHandler::handleCreateScoreToken);
             javalinConfig.routes.put("/api/v2/beatmaps/{beatmap_id}/solo/scores/{token}", soloScoreHandler::handleSubmitScore);
             javalinConfig.routes.post("/api/v2/beatmaps/{beatmap_id}/solo/scores/{token}", soloScoreHandler::handleSubmitScore);
