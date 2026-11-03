@@ -42,6 +42,12 @@ public class MetadataHub {
 
     /** Room of today's daily challenge, or null when there is none. The client shows its "Daily Challenge" button from it. */
     private volatile Long dailyChallengeRoomId = null;
+
+    private volatile com.osuserverlist.lazer.multiplayer.MultiplayerManager multiplayerManager;
+
+    public void setMultiplayerManager(com.osuserverlist.lazer.multiplayer.MultiplayerManager manager) {
+        this.multiplayerManager = manager;
+    }
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
 
     public static class ClientSession {
@@ -50,6 +56,8 @@ public class MetadataHub {
         public boolean handshaken = false;
         public boolean isMessagePack = true;
         public boolean watchingPresence = false;
+        /** Rooms this client asked to hear about (the daily challenge screen watches its own room). */
+        public final java.util.Set<Long> watchedRooms = java.util.concurrent.ConcurrentHashMap.newKeySet();
         public int currentStatus = 2; // 2 = UserStatus.Online
 
         public ClientSession(WsContext ws, int userId) {
@@ -311,6 +319,27 @@ public class MetadataHub {
             return;
         }
 
+        // The daily challenge screen subscribes to its room and gets the score statistics back
+        if ("BeginWatchingMultiplayerRoom".equalsIgnoreCase(target)) {
+            long roomId = (argCount > 0 && unpacker.hasNext()) ? unpacker.unpackLong() : -1;
+
+            if (roomId >= 0) session.watchedRooms.add(roomId);
+
+            sendRoomStatsCompletion(session, invocationId, roomId);
+            return;
+        }
+
+        if ("EndWatchingMultiplayerRoom".equalsIgnoreCase(target)) {
+            long roomId = (argCount > 0 && unpacker.hasNext()) ? unpacker.unpackLong() : -1;
+
+            session.watchedRooms.remove(roomId);
+
+            if (invocationId != null) {
+                sendVoidCompletion(session, invocationId);
+            }
+            return;
+        }
+
         if ("RefreshFriends".equalsIgnoreCase(target)) {
             if (invocationId != null) {
                 sendVoidCompletion(session, invocationId);
@@ -339,6 +368,90 @@ public class MetadataHub {
         }
 
         logger.info("Daily challenge announced to {} metadata client(s): room {}", sessions.size(), roomId);
+    }
+
+    /** Completion of BeginWatchingMultiplayerRoom: MultiplayerPlaylistItemStats[] of the room (empty when unknown). */
+    private void sendRoomStatsCompletion(ClientSession session, String invocationId, long roomId) {
+        if (invocationId == null) return;
+
+        try {
+            var manager = multiplayerManager;
+            var stats = manager != null && roomId >= 0
+                    ? manager.getRoomItemStats(roomId)
+                    : java.util.List.<com.osuserverlist.lazer.multiplayer.MultiplayerManager.ItemStats>of();
+
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            MessagePacker packer = MessagePack.newDefaultPacker(baos);
+
+            // Completion with a result: [3, {}, invocationId, 3, MultiplayerPlaylistItemStats[]]
+            packer.packArrayHeader(5);
+            packer.packInt(3);
+            packer.packMapHeader(0);
+            packer.packString(invocationId);
+            packer.packInt(3);
+
+            packer.packArrayHeader(stats.size());
+
+            for (var item : stats) {
+                // MultiplayerPlaylistItemStats: [PlaylistItemID, TotalScoreDistribution[13], CumulativeScore, LastProcessedScoreID]
+                packer.packArrayHeader(4);
+                packer.packLong(item.playlistItemId());
+                packer.packArrayHeader(item.totalScoreDistribution().length);
+
+                for (long bin : item.totalScoreDistribution()) {
+                    packer.packLong(bin);
+                }
+
+                packer.packLong(item.cumulativeScore());
+                packer.packLong(item.lastProcessedScoreId());
+            }
+
+            packer.close();
+            session.ws.send(ByteBuffer.wrap(encodeLengthPrefixed(baos.toByteArray())));
+        } catch (Exception e) {
+            logger.debug("Failed to send room stats completion: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * A score was set in a playlist room: every client watching that room is told, which is what makes the
+     * leaderboard and the event feed of the daily challenge move without a refresh.
+     */
+    public void onRoomScoreSet(long roomId, long playlistItemId, long scoreId, int userId, long totalScore, Integer newRank) {
+        for (ClientSession session : sessions.values()) {
+            if (!session.handshaken || !session.isMessagePack || !session.watchedRooms.contains(roomId)) continue;
+
+            try {
+                ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                MessagePacker packer = MessagePack.newDefaultPacker(baos);
+
+                // Invocation: [1, {}, null, "MultiplayerRoomScoreSet", [ [roomId, itemId, scoreId, userId, total, newRank] ]]
+                packer.packArrayHeader(5);
+                packer.packInt(1);
+                packer.packMapHeader(0);
+                packer.packNil();
+                packer.packString("MultiplayerRoomScoreSet");
+                packer.packArrayHeader(1);
+
+                packer.packArrayHeader(6);
+                packer.packLong(roomId);
+                packer.packLong(playlistItemId);
+                packer.packLong(scoreId);
+                packer.packInt(userId);
+                packer.packLong(totalScore);
+
+                if (newRank == null) {
+                    packer.packNil();
+                } else {
+                    packer.packInt(newRank);
+                }
+
+                packer.close();
+                session.ws.send(ByteBuffer.wrap(encodeLengthPrefixed(baos.toByteArray())));
+            } catch (Exception e) {
+                logger.debug("Failed to send MultiplayerRoomScoreSet: {}", e.getMessage());
+            }
+        }
     }
 
     /** DailyChallengeUpdated(DailyChallengeInfo?): [roomId] while a challenge runs, nil when it does not. */

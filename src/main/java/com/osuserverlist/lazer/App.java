@@ -360,6 +360,8 @@ public class App {
 
         // The game client learns about the daily challenge from the metadata hub, not from the room list
         dailyChallengeService.setListener(metadataHub::setDailyChallenge);
+        metadataHub.setMultiplayerManager(multiplayerManager);
+        multiplayerManager.setScoreSetListener(metadataHub::onRoomScoreSet);
         dailyChallengeService.start();
         app.start(config.port);
         logger.info("lazer.jar started successfully on port {}", config.port);
