@@ -168,6 +168,9 @@ public class App {
             javalinConfig.routes.get("/api/v2/beatmaps/{beatmap_id}/scores/users/{user_id}/all", scoreHandler::handleUserBeatmapScoresAll);
             // Score lookup & replay download (the download route must be registered before /scores/{ruleset}/{score})
             javalinConfig.routes.get("/api/v2/scores/{score_id}/download", scoreHandler::handleDownloadReplay);
+            javalinConfig.routes.put("/api/v2/score-pins/{score_id}", scoreHandler::handlePin);
+            javalinConfig.routes.delete("/api/v2/score-pins/{score_id}", scoreHandler::handleUnpin);
+            javalinConfig.routes.post("/api/v2/score-pins/{score_id}/reorder", scoreHandler::handleReorderPin);
             javalinConfig.routes.get("/api/v2/scores/{score}", scoreHandler::handleGetScore);
             javalinConfig.routes.get("/api/v2/scores/{ruleset}/{score}", scoreHandler::handleGetScore);
             javalinConfig.routes.get("/api/v2/beatmapsets/{beatmapset_id}", beatmapHandler::handleGetBeatmapset);
@@ -176,6 +179,7 @@ public class App {
             javalinConfig.routes.get("/api/v2/beatmaps/", beatmapHandler::handleGetBeatmaps);
             javalinConfig.routes.get("/api/v2/beatmaps/{beatmap_id}", beatmapHandler::handleGetBeatmap);
             javalinConfig.routes.get("/api/v2/beatmaps/lookup", beatmapHandler::handleLookupBeatmap);
+            javalinConfig.routes.post("/api/v2/beatmaps/{beatmap_id}/attributes", beatmapHandler::handleBeatmapAttributes);
 
             // Friends & Blocks
             javalinConfig.routes.get("/api/v2/friends", relationshipsHandler);

@@ -141,4 +141,53 @@ public class ScoreHandler {
         }
         ctx.json(Map.of("scores", scores));
     }
+
+    /** PUT /score-pins/{score_id} */
+    public void handlePin(@NotNull Context ctx) {
+        User user = authenticate(ctx);
+        if (user == null) {
+            ctx.status(401).json(Map.of("error", "Unauthorized"));
+            return;
+        }
+        long id = parseId(ctx, "score_id");
+        if (id < 0 || !databaseManager.pinScore(user.id, id)) {
+            ctx.status(404).json(Map.of("error", "Score not found"));
+            return;
+        }
+        ctx.json(Map.of());
+    }
+
+    /** DELETE /score-pins/{score_id} */
+    public void handleUnpin(@NotNull Context ctx) {
+        User user = authenticate(ctx);
+        if (user == null) {
+            ctx.status(401).json(Map.of("error", "Unauthorized"));
+            return;
+        }
+        long id = parseId(ctx, "score_id");
+        if (id < 0 || !databaseManager.unpinScore(user.id, id)) {
+            ctx.status(404).json(Map.of("error", "Pinned score not found"));
+            return;
+        }
+        ctx.json(Map.of());
+    }
+
+    /** POST /score-pins/{score_id}/reorder with {"after_score_id": n} or {"before_score_id": n} */
+    @SuppressWarnings("unchecked")
+    public void handleReorderPin(@NotNull Context ctx) throws IOException {
+        User user = authenticate(ctx);
+        if (user == null) {
+            ctx.status(401).json(Map.of("error", "Unauthorized"));
+            return;
+        }
+        long id = parseId(ctx, "score_id");
+        Map<String, Object> body = ctx.body().isBlank() ? Map.of() : new com.fasterxml.jackson.databind.ObjectMapper().readValue(ctx.body(), Map.class);
+        Long after = body.get("after_score_id") instanceof Number n ? n.longValue() : null;
+        Long before = body.get("before_score_id") instanceof Number n ? n.longValue() : null;
+        if (id < 0 || !databaseManager.reorderPin(user.id, id, after, before)) {
+            ctx.status(404).json(Map.of("error", "Pinned score not found"));
+            return;
+        }
+        ctx.json(Map.of());
+    }
 }

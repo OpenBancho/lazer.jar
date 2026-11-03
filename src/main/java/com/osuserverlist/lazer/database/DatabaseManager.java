@@ -58,6 +58,7 @@ public class DatabaseManager {
             ensureLazerScoreColumn();
             ensureTelemetryTable();
             ensureAnticheatFlagsTable();
+            ensureScorePinsTable();
         } catch (Exception e) {
             logger.error("Failed to connect to MySQL database: {}", e.getMessage());
         }
@@ -300,7 +301,8 @@ public class DatabaseManager {
         if ("firsts".equalsIgnoreCase(type)) {
             sql.append(" AND s.status = 2 AND s.grade != 'F' ORDER BY s.pp DESC, s.score DESC ");
         } else if ("pinned".equalsIgnoreCase(type)) {
-            sql.append(" AND 1=0 ");
+            sql.append(" AND s.id IN (SELECT score_id FROM score_pins WHERE user_id = s.userid) AND s.status != -1"
+                    + " ORDER BY (SELECT pinned_order FROM score_pins p WHERE p.score_id = s.id) DESC ");
         } else if ("best".equalsIgnoreCase(type)) {
             sql.append(" AND s.status = 2 AND s.grade != 'F' ORDER BY s.pp DESC, s.score DESC ");
         } else if ("recent".equalsIgnoreCase(type)) {
@@ -1588,6 +1590,94 @@ public class DatabaseManager {
             logger.info("anticheat_flags table verified.");
         } catch (Exception e) {
             logger.warn("Could not check/create anticheat_flags table: {}", e.getMessage());
+        }
+    }
+
+    // ---- score pins ----
+
+    private void ensureScorePinsTable() {
+        String sql = "CREATE TABLE IF NOT EXISTS score_pins (" +
+                "score_id BIGINT NOT NULL PRIMARY KEY, " +
+                "user_id INT NOT NULL, " +
+                "pinned_order INT NOT NULL DEFAULT 0, " +
+                "created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, " +
+                "INDEX idx_score_pins_user (user_id)) DEFAULT CHARSET=utf8mb4";
+        try (Connection conn = getConnection(); Statement stmt = conn.createStatement()) {
+            stmt.executeUpdate(sql);
+        } catch (SQLException e) {
+            logger.warn("Could not check/create score_pins table: {}", e.getMessage());
+        }
+    }
+
+    /** Pins one of the user's own, visible scores. Returns false if the score is not theirs. */
+    public boolean pinScore(int userId, long scoreId) {
+        try (Connection conn = getConnection()) {
+            try (PreparedStatement st = conn.prepareStatement("SELECT 1 FROM scores WHERE id = ? AND userid = ? AND status != -1")) {
+                st.setLong(1, scoreId);
+                st.setInt(2, userId);
+                try (ResultSet rs = st.executeQuery()) {
+                    if (!rs.next()) return false;
+                }
+            }
+            String sql = "INSERT IGNORE INTO score_pins (score_id, user_id, pinned_order) "
+                    + "SELECT ?, ?, COALESCE(MAX(pinned_order), 0) + 1 FROM score_pins WHERE user_id = ?";
+            try (PreparedStatement st = conn.prepareStatement(sql)) {
+                st.setLong(1, scoreId);
+                st.setInt(2, userId);
+                st.setInt(3, userId);
+                st.executeUpdate();
+            }
+            return true;
+        } catch (SQLException e) {
+            logger.error("Error pinning score {}: {}", scoreId, e.getMessage());
+            return false;
+        }
+    }
+
+    public boolean unpinScore(int userId, long scoreId) {
+        try (Connection conn = getConnection();
+             PreparedStatement st = conn.prepareStatement("DELETE FROM score_pins WHERE score_id = ? AND user_id = ?")) {
+            st.setLong(1, scoreId);
+            st.setInt(2, userId);
+            return st.executeUpdate() > 0;
+        } catch (SQLException e) {
+            logger.error("Error unpinning score {}: {}", scoreId, e.getMessage());
+            return false;
+        }
+    }
+
+    /** Moves a pinned score right after {@code afterId} or right before {@code beforeId} (display order, top first). */
+    public boolean reorderPin(int userId, long scoreId, Long afterId, Long beforeId) {
+        try (Connection conn = getConnection()) {
+            List<Long> order = new ArrayList<>();
+            try (PreparedStatement st = conn.prepareStatement("SELECT score_id FROM score_pins WHERE user_id = ? ORDER BY pinned_order DESC")) {
+                st.setInt(1, userId);
+                try (ResultSet rs = st.executeQuery()) {
+                    while (rs.next()) order.add(rs.getLong(1));
+                }
+            }
+            if (!order.remove(Long.valueOf(scoreId))) return false;
+            int idx = 0;
+            if (afterId != null && order.contains(afterId)) {
+                idx = order.indexOf(afterId) + 1;
+            } else if (beforeId != null && order.contains(beforeId)) {
+                idx = order.indexOf(beforeId);
+            }
+            order.add(idx, scoreId);
+            try (PreparedStatement st = conn.prepareStatement("UPDATE score_pins SET pinned_order = ? WHERE score_id = ? AND user_id = ?")) {
+                int value = order.size();
+                for (long id : order) {
+                    st.setInt(1, value--);
+                    st.setLong(2, id);
+                    st.setInt(3, userId);
+                    st.addBatch();
+                }
+                st.executeBatch();
+            }
+            return true;
+        } catch (SQLException e) {
+            logger.error("Error reordering pin {}: {}", scoreId, e.getMessage());
+            return false;
         }
     }
 

@@ -469,4 +469,55 @@ public class BeatmapHandler {
             default -> "osu";
         };
     }
+
+    /** POST /beatmaps/{beatmap_id}/attributes -- difficulty attributes for the requested mods and ruleset. */
+    @SuppressWarnings("unchecked")
+    public void handleBeatmapAttributes(io.javalin.http.Context ctx) {
+        int beatmapId;
+        try {
+            beatmapId = Integer.parseInt(ctx.pathParam("beatmap_id"));
+        } catch (NumberFormatException e) {
+            ctx.status(400).json(Map.of("error", "Invalid beatmap_id"));
+            return;
+        }
+        BeatmapRecord beatmap = databaseManager.findBeatmapById(beatmapId);
+        if (beatmap == null) {
+            ctx.status(404).json(Map.of("error", "Beatmap not found"));
+            return;
+        }
+
+        int rulesetId = beatmap.mode % 4;
+        List<Object> mods = new ArrayList<>();
+        try {
+            String body = ctx.body();
+            if (body != null && !body.isBlank()) {
+                Map<String, Object> json = new com.fasterxml.jackson.databind.ObjectMapper().readValue(body, Map.class);
+                if (json.get("mods") instanceof List<?> l) mods.addAll(l);
+                if (json.get("ruleset_id") instanceof Number n) rulesetId = n.intValue();
+                else if (json.get("ruleset") != null) rulesetId = UserResponseBuilder.parseMode(json.get("ruleset").toString());
+            }
+        } catch (Exception ignored) {
+            // fall through to query parameters
+        }
+        for (String m : ctx.queryParams("mods")) {
+            if (m.matches("\\d+")) {
+                mods.add(Integer.parseInt(m));
+            } else {
+                for (String part : m.split("[,\\s]+")) if (!part.isBlank()) mods.add(part);
+            }
+        }
+        String rq = ctx.queryParam("ruleset_id");
+        if (rq == null) rq = ctx.queryParam("ruleset");
+        if (rq != null && !rq.isBlank()) rulesetId = UserResponseBuilder.parseMode(rq);
+
+        Map<String, Object> attrs = com.osuserverlist.lazer.calculators.PerformanceCalculator.difficultyAttributes(
+                beatmapId, rulesetId, UserResponseBuilder.modsToInt(mods));
+        if (attrs == null) {
+            // Map file unavailable: fall back to the stored star rating so the client still gets an answer
+            attrs = new LinkedHashMap<>();
+            attrs.put("star_rating", (double) beatmap.diff);
+            attrs.put("max_combo", beatmap.maxCombo);
+        }
+        ctx.json(Map.of("attributes", attrs));
+    }
 }
