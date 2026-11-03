@@ -12,6 +12,9 @@ import java.security.MessageDigest;
 public class AuthService {
     private static final Logger logger = LoggerFactory.getLogger(AuthService.class);
 
+    /** The VERIFIED bit of Privileges, as bancho.jar defines it. */
+    private static final int VERIFIED = 1 << 1;
+
     private final DatabaseManager databaseManager;
     private final TokenStore tokenStore;
 
@@ -45,7 +48,18 @@ public class AuthService {
         }
 
         logger.info("User '{}' (id: {}) successfully authenticated", user.name, user.id);
-        return tokenStore.issue(user.id, user.name, user.privileges, scope);
+
+        // Same rule as the stable client: the first successful in-game login is what verifies an account that was
+        // registered on the website, so a player who only ever uses lazer is not left unverified.
+        int privileges = user.privileges;
+        if ((privileges & VERIFIED) == 0) {
+            if (databaseManager.grantPrivileges(user.id, VERIFIED)) {
+                logger.info("User '{}' (id: {}) verified by logging in from lazer", user.name, user.id);
+            }
+            privileges |= VERIFIED;
+        }
+
+        return tokenStore.issue(user.id, user.name, privileges, scope);
     }
 
     public TokenStore.TokenPair authenticateRefresh(String refreshToken) {
