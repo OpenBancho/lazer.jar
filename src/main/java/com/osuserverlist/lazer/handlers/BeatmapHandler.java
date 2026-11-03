@@ -511,7 +511,7 @@ public class BeatmapHandler {
         if (rq != null && !rq.isBlank()) rulesetId = UserResponseBuilder.parseMode(rq);
 
         Map<String, Object> attrs = com.osuserverlist.lazer.calculators.PerformanceCalculator.difficultyAttributes(
-                beatmapId, rulesetId, UserResponseBuilder.modsToInt(mods));
+                beatmapId, rulesetId, UserResponseBuilder.modsToInt(mods), mods);
         if (attrs == null) {
             // Map file unavailable: fall back to the stored star rating so the client still gets an answer
             attrs = new LinkedHashMap<>();

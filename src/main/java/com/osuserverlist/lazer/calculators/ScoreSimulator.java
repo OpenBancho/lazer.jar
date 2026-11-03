@@ -123,6 +123,24 @@ public class ScoreSimulator {
             int n300, int n100, int n50, int nmiss, int ngeki, int nkatu,
             int timeElapsed
     ) {
+        return simulateAndValidate(userId, beatmap, effectiveMode, totalScore, clientAccuracy, maxCombo, passed,
+                modsBitmask, n300, n100, n50, nmiss, ngeki, nkatu, timeElapsed, null);
+    }
+
+    /** Same, but PP is computed with the client's full mod list (Rate Adjust / Difficulty Adjust settings). */
+    public static SimulationResult simulateAndValidate(
+            int userId,
+            BeatmapRecord beatmap,
+            int effectiveMode,
+            long totalScore,
+            float clientAccuracy,
+            int maxCombo,
+            boolean passed,
+            int modsBitmask,
+            int n300, int n100, int n50, int nmiss, int ngeki, int nkatu,
+            int timeElapsed,
+            java.util.List<?> apiMods
+    ) {
         int baseRuleset = effectiveMode % 4;
 
         // Ensure accuracy is valid and clamped between 0.0 and 1.0
@@ -148,7 +166,8 @@ public class ScoreSimulator {
                         finalAccuracy,
                         n300, n100, n50, nmiss, ngeki, nkatu,
                         beatmap.diff,
-                        totalScore
+                        totalScore,
+                        apiMods
                 );
             }
         }

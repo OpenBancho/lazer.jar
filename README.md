@@ -86,8 +86,8 @@
   - [ ] osu!catch replay parser & simulation
   - [ ] osu!mania replay parser & simulation
 - [ ] **Custom Mod Modifiers**
-  - [ ] Difficulty Adjust (CS/AR/OD/HP custom overrides)
-  - [ ] Rate Adjust (0.5x - 2.0x playback speed multiplier handling in PP)
+  - [x] Difficulty Adjust (CS/AR/OD/HP custom overrides) — mod settings are passed to the native PP calculator
+  - [x] Rate Adjust (speed_change on DT/HT) — same, also used by `POST /beatmaps/{id}/attributes`
 
 ---
 
