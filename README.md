@@ -73,9 +73,10 @@
 ---
 
 ### 3. Replay Storage & Scoring
-- [ ] **Replay File Serving** (`/api/v2/scores/{score_id}/download`)
-  - [ ] Storing raw `.osr` / `.score` files on disk / S3-compatible storage
-  - [ ] Streaming replay files to client for leaderboard replay viewing
+- [x] **Replay File Serving** (`/api/v2/scores/{score_id}/download`)
+  - [x] Storing `.osr` files on disk (`data/replays/{id}.osr`, built from spectator frames; S3 not supported)
+  - [x] Streaming replay files to client for leaderboard replay viewing (+ replay view counter)
+- [x] **Score lookup** (`/api/v2/scores/{id}`, `/scores/{ruleset}/{id}`, `/beatmaps/{id}/scores/users/{user_id}[/all]`)
 - [ ] **Ruleset Simulation Expansion**
   - [x] osu!standard replay simulation & hit validation
   - [ ] osu!taiko replay parser & simulation

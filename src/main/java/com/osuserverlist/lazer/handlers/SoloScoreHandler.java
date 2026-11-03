@@ -310,6 +310,17 @@ public class SoloScoreHandler {
 
         ScoreRecord sc = submitResult.score;
 
+        // Hand the saved score to the replay store: the .osr is written once the spectator session has ended too.
+        String replayMd5 = beatmap != null && beatmap.md5 != null ? beatmap.md5 : tokenInfo.beatmapHash;
+        if (replayMd5 != null) {
+            com.osuserverlist.lazer.replay.ReplayStore.onScoreSaved(token,
+                    new com.osuserverlist.lazer.replay.ReplayStore.ScoreInfo(
+                            sc.id, user.id, user.name, replayMd5, effectiveMode,
+                            n300, n100, n50, ngeki, nkatu, nmiss,
+                            sc.score, maxCombo, nmiss == 0 && maxCombo > 0 && beatmap != null && maxCombo >= beatmap.maxCombo,
+                            modsBitmask, System.currentTimeMillis()));
+        }
+
         if (spectatorHub != null) {
             spectatorHub.notifyScoreProcessed(user.id, sc.id);
         }

@@ -244,7 +244,7 @@ public class UserResponseBuilder {
         map.put("started_at", endedAt);
         map.put("ended_at", endedAt);
         map.put("created_at", endedAt);
-        map.put("has_replay", false);
+        map.put("has_replay", com.osuserverlist.lazer.replay.ReplayStore.exists(sc.id));
         boolean isRanked = sc.mapStatus > 0;
         map.put("ranked", isRanked);
         map.put("preserve", sc.status == 2 || sc.pp > 0);
