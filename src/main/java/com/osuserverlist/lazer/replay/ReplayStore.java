@@ -34,7 +34,8 @@ import java.util.concurrent.Executors;
  */
 public final class ReplayStore {
     private static final Logger logger = LoggerFactory.getLogger(ReplayStore.class);
-    private static final Path REPLAY_DIR = Paths.get("data", "replays");
+    // Shared with bancho.jar (which serves them to the website and the stable client). Resolved by configure().
+    private static volatile Path REPLAY_DIR = Paths.get("data", "replays");
     private static final long SESSION_TTL_MS = 3L * 60 * 60 * 1000;
     private static final int MAX_FRAMES = 400_000;
     private static final long TICKS_AT_UNIX_EPOCH = 621_355_968_000_000_000L;
@@ -69,6 +70,23 @@ public final class ReplayStore {
     private static final Map<Integer, Session> BY_USER = new ConcurrentHashMap<>();
 
     private ReplayStore() {}
+
+    /**
+     * Picks the replay folder: an explicit REPLAYS_DIR, else bancho.jar's data/replays when a bancho.jar checkout sits
+     * next to this one (so stable and lazer replays live together), else ./data/replays.
+     */
+    public static void configure(String configured) {
+        Path dir;
+        if (configured != null && !configured.isBlank()) {
+            dir = Paths.get(configured.trim());
+        } else if (Files.isDirectory(Paths.get("..", "bancho.jar", "data"))) {
+            dir = Paths.get("..", "bancho.jar", "data", "replays");
+        } else {
+            dir = Paths.get("data", "replays");
+        }
+        REPLAY_DIR = dir;
+        logger.info("Replays are stored in {}", dir.toAbsolutePath().normalize());
+    }
 
     public static Path replayPath(long scoreId) {
         return REPLAY_DIR.resolve(scoreId + ".osr");
