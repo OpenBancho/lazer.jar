@@ -20,7 +20,8 @@ import java.util.*;
  * Fills the parts of a full profile response that need extra data: the about-me page, beatmap counters,
  * monthly play counts and the rank history graph. Also serves PUT /users/{id}/page.
  *
- * The rank history is recorded lazily (one snapshot per user, mode and day, taken whenever a profile is built).
+ * The rank history lives in bancho.jar's {@code rank_history} table (shared database): bancho.jar snapshots it on a
+ * schedule, and a profile build only adds today's row if it is missing, exactly as bancho.jar does.
  */
 public class ProfileExtras {
     private static final Logger logger = LoggerFactory.getLogger(ProfileExtras.class);
@@ -59,8 +60,10 @@ public class ProfileExtras {
         String[] ddl = {
                 "CREATE TABLE IF NOT EXISTS user_pages (user_id INT NOT NULL PRIMARY KEY, raw MEDIUMTEXT NOT NULL, "
                         + "updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) DEFAULT CHARSET=utf8mb4",
-                "CREATE TABLE IF NOT EXISTS rank_history (user_id INT NOT NULL, mode TINYINT NOT NULL, day DATE NOT NULL, "
-                        + "global_rank INT NOT NULL, PRIMARY KEY (user_id, mode, day)) DEFAULT CHARSET=utf8mb4"
+                // Same table (and exact schema) bancho.jar's RankSnapshotTask maintains; shared database
+                "CREATE TABLE IF NOT EXISTS `rank_history` (`userid` int NOT NULL, `mode` tinyint NOT NULL, `date` date NOT NULL, "
+                        + "`rank` int NOT NULL, `pp` int NOT NULL DEFAULT '0', PRIMARY KEY (`userid`, `mode`, `date`), "
+                        + "KEY `rank_history_lookup` (`userid`, `mode`, `date`)) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4"
         };
         try (Connection conn = db.getConnection(); Statement st = conn.createStatement()) {
             for (String sql : ddl) st.executeUpdate(sql);
@@ -94,13 +97,13 @@ public class ProfileExtras {
             }
 
             // Counters
-            root.put("favourite_beatmapset_count", scalar(conn, "SELECT COUNT(*) FROM beatmapset_favourites WHERE user_id = ?", user.id));
+            root.put("favourite_beatmapset_count", scalar(conn, "SELECT COUNT(*) FROM favourites WHERE userid = ?", user.id));
             root.put("ranked_beatmapset_count", countSets(conn, user.name, "1, 2"));
             root.put("loved_beatmapset_count", countSets(conn, user.name, "4"));
             root.put("pending_beatmapset_count", countSets(conn, user.name, "0, -1, 3"));
             root.put("graveyard_beatmapset_count", countSets(conn, user.name, "-2"));
             root.put("beatmap_playcounts_count", scalar(conn, "SELECT COUNT(DISTINCT map_md5) FROM scores WHERE userid = ?", user.id));
-            root.put("comments_count", scalar(conn, "SELECT COUNT(*) FROM comments WHERE user_id = ? AND deleted_at IS NULL", user.id));
+            root.put("comments_count", scalar(conn, "SELECT COUNT(*) FROM lazer_comments WHERE user_id = ? AND deleted_at IS NULL", user.id));
 
             // Monthly play counts
             List<Map<String, Object>> monthly = new ArrayList<>();
@@ -118,17 +121,17 @@ public class ProfileExtras {
             // Rank history: snapshot today's rank, return the last 90 days
             if (stats != null && stats.globalRank != null && stats.globalRank > 0) {
                 try (PreparedStatement st = conn.prepareStatement(
-                        "INSERT INTO rank_history (user_id, mode, day, global_rank) VALUES (?, ?, CURDATE(), ?) "
-                                + "ON DUPLICATE KEY UPDATE global_rank = VALUES(global_rank)")) {
+                        "INSERT IGNORE INTO `rank_history` (`userid`, `mode`, `date`, `rank`, `pp`) VALUES (?, ?, CURDATE(), ?, ?)")) {
                     st.setInt(1, user.id);
                     st.setInt(2, mode);
                     st.setInt(3, stats.globalRank);
+                    st.setInt(4, stats.pp);
                     st.executeUpdate();
                 }
             }
             List<Integer> ranks = new ArrayList<>();
             try (PreparedStatement st = conn.prepareStatement(
-                    "SELECT day, global_rank FROM rank_history WHERE user_id = ? AND mode = ? AND day >= DATE_SUB(CURDATE(), INTERVAL 89 DAY) ORDER BY day")) {
+                    "SELECT `date`, `rank` FROM `rank_history` WHERE `userid` = ? AND `mode` = ? AND `date` >= DATE_SUB(CURDATE(), INTERVAL 89 DAY) ORDER BY `date`")) {
                 st.setInt(1, user.id);
                 st.setInt(2, mode);
                 try (ResultSet rs = st.executeQuery()) {
