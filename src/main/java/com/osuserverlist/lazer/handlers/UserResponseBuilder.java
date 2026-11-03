@@ -273,13 +273,7 @@ public class UserResponseBuilder {
         bms.put("creator", sc.creator);
         bms.put("status", BeatmapHandler.statusToString(sc.mapStatus));
 
-        Map<String, Object> covers = new LinkedHashMap<>();
-        String baseCover = "https://assets.ppy.sh/beatmaps/" + sc.setId + "/covers/";
-        covers.put("cover", baseCover + "cover.jpg");
-        covers.put("card", baseCover + "card.jpg");
-        covers.put("list", baseCover + "list.jpg");
-        covers.put("slimcover", baseCover + "slimcover.jpg");
-        bms.put("covers", covers);
+        bms.put("covers", BeatmapHandler.coversOf(sc.setId));
 
         bm.put("beatmapset", bms);
         map.put("beatmap", bm);
