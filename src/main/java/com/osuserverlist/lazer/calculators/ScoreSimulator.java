@@ -86,14 +86,44 @@ public class ScoreSimulator {
             float accuracy,
             boolean passed
     ) {
+        // Without the hit counts only the accuracy ladder can be applied (no ruleset-specific rule)
+        return calculateGrade(modsBitmask, accuracy, passed, -1, 0, 0, 0, 0, 0);
+    }
+
+    /**
+     * The same grade, with the extra rules each ruleset of the client applies on top of the accuracy ladder
+     * (OsuScoreProcessor, TaikoScoreProcessor, ManiaScoreProcessor .RankFromScore):
+     * <ul>
+     *   <li>osu!, taiko: S or SS with even a single miss is an A</li>
+     *   <li>mania: S with nothing but Perfect/Great hits is an SS</li>
+     *   <li>catch: accuracy only</li>
+     * </ul>
+     *
+     * @param ruleset 0 osu!, 1 taiko, 2 catch, 3 mania; anything else applies the accuracy ladder only
+     */
+    public static String calculateGrade(
+            int modsBitmask,
+            float accuracy,
+            boolean passed,
+            int ruleset,
+            int nmiss, int n100, int n50, int ngeki, int nkatu
+    ) {
         if (!passed) return "F";
+
+        // osu! and taiko do not give an S (or SS) to a play with a miss, whatever its accuracy
+        boolean noSForMiss = (ruleset == 0 || ruleset == 1) && nmiss > 0;
+        // mania: no Good, Ok, Meh or Miss at all is a perfect play, even when its accuracy is just under 100%
+        boolean maniaAllPerfect = ruleset == 3 && nkatu == 0 && n100 == 0 && n50 == 0 && nmiss == 0;
 
         boolean isHiddenOrFlashlight = (modsBitmask & 8) != 0 || (modsBitmask & 1024) != 0;
 
         if (accuracy >= 1.0f) {
+            if (noSForMiss) return "A";
             return isHiddenOrFlashlight ? "XH" : "X";
         }
         if (accuracy >= 0.95f) {
+            if (noSForMiss) return "A";
+            if (maniaAllPerfect) return isHiddenOrFlashlight ? "XH" : "X";
             return isHiddenOrFlashlight ? "SH" : "S";
         }
         if (accuracy >= 0.90f) {
@@ -150,7 +180,7 @@ public class ScoreSimulator {
         }
 
         // 2. Calculate genuine server grade using osu!lazer rules
-        String serverGrade = calculateGrade(modsBitmask, finalAccuracy, passed);
+        String serverGrade = calculateGrade(modsBitmask, finalAccuracy, passed, baseRuleset, nmiss, n100, n50, ngeki, nkatu);
 
         // 3. Calculate genuine server PP
         float serverPp = 0.0f;
