@@ -96,6 +96,7 @@
   - [ ] User custom profile banners & bio page (`/api/v2/users/{id}/extra`)
   - [ ] Badges & title management
   - [ ] User statistics history graphs (rank history, playcount history)
+- [x] **Profile extras** (`/users/{id}/recent_activity`, `/beatmapsets/{type}` favourite/most_played/ranked/loved/pending/graveyard, `/beatmaps-passed`)
 - [x] **Comments System** (`/api/v2/comments`)
   - [x] Beatmapset & score comments posting (edit, soft delete, replies)
   - [x] Comment upvotes (pinned comments: stored, no endpoint yet)
