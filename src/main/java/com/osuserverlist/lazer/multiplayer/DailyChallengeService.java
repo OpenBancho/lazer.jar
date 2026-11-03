@@ -38,6 +38,7 @@ public class DailyChallengeService {
     private static final int STAFF_MASK = (1 << 12) | (1 << 13) | (1 << 14);
 
     private final DatabaseManager db;
+    private final List<String> staffKeys;
     private final MultiplayerManager multiplayerManager;
     private final AuthService authService;
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -49,7 +50,10 @@ public class DailyChallengeService {
     private volatile LocalDate roomDay = null;
     private volatile long roomId = -1;
 
-    public DailyChallengeService(DatabaseManager db, MultiplayerManager multiplayerManager, AuthService authService) {
+    public DailyChallengeService(DatabaseManager db, MultiplayerManager multiplayerManager, AuthService authService,
+                                 com.osuserverlist.lazer.config.ServerConfig config) {
+        this.staffKeys = java.util.Arrays.stream(config.staffApiKeys.split(","))
+                .map(String::trim).filter(k -> k.length() >= 24).toList();
         this.db = db;
         this.multiplayerManager = multiplayerManager;
         this.authService = authService;
@@ -132,11 +136,32 @@ public class DailyChallengeService {
         return room;
     }
 
+    /** True when the bearer token is one of the configured service keys (the website acting for a staff member). */
+    private boolean isServiceKey(String token) {
+        byte[] given = token.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        boolean match = false;
+
+        for (String key : staffKeys) {
+            // every key is compared, in constant time, so the answer does not depend on which one matched
+            match |= java.security.MessageDigest.isEqual(given, key.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        }
+
+        return match;
+    }
+
+    /** @return the staff user, or a stand-in for a service key; null (answer already sent) when not allowed. */
     private User requireStaff(Context ctx) {
         String header = ctx.header("Authorization");
         if (header == null || !header.regionMatches(true, 0, "Bearer ", 0, 7)) {
             ctx.status(401).json(Map.of("error", "Unauthorized"));
             return null;
+        }
+        if (isServiceKey(header.substring(7).trim())) {
+            User service = new User();
+            service.id = 0;
+            service.name = "service";
+            service.privileges = STAFF_MASK;
+            return service;
         }
         TokenStore.TokenData data = authService.resolveToken(header.substring(7).trim());
         User user = data == null ? null : db.findUserById(data.userId);
@@ -209,7 +234,103 @@ public class DailyChallengeService {
             ctx.status(500).json(Map.of("error", "Database error"));
             return;
         }
-        if (day.equals(LocalDate.now(ZoneOffset.UTC))) ensureTodayRoom();
+        if (day.equals(LocalDate.now(ZoneOffset.UTC))) {
+            closeTodayRoom();
+            ensureTodayRoom();
+        }
         ctx.json(Map.of("date", day.toString(), "beatmap_id", beatmap.intValue(), "ruleset_id", ruleset));
+    }
+
+    /** Ends the live room of today, so a replaced or removed challenge does not keep running. */
+    private synchronized void closeTodayRoom() {
+        if (roomId < 0) return;
+
+        Room old = multiplayerManager.getRoom(roomId);
+
+        if (old != null) {
+            old.endsAt = System.currentTimeMillis();
+            old.state = com.osuserverlist.lazer.models.MultiplayerRoomData.RoomState.CLOSED;
+        }
+
+        roomDay = null;
+        roomId = -1;
+    }
+
+    /** DELETE /api/v2/daily-challenge?date=YYYY-MM-DD (staff) */
+    public void handleDelete(@NotNull Context ctx) {
+        if (requireStaff(ctx) == null) return;
+
+        LocalDate day;
+        try {
+            day = LocalDate.parse(String.valueOf(ctx.queryParam("date")));
+        } catch (Exception e) {
+            ctx.status(422).json(Map.of("error", "date must be YYYY-MM-DD"));
+            return;
+        }
+
+        try (Connection conn = db.getConnection();
+             PreparedStatement st = conn.prepareStatement("DELETE FROM daily_challenges WHERE day = ?")) {
+            st.setDate(1, Date.valueOf(day));
+            int removed = st.executeUpdate();
+
+            if (removed > 0 && day.equals(LocalDate.now(ZoneOffset.UTC))) closeTodayRoom();
+
+            ctx.json(Map.of("removed", removed));
+        } catch (SQLException e) {
+            logger.error("Could not delete daily challenge: {}", e.getMessage());
+            ctx.status(500).json(Map.of("error", "Database error"));
+        }
+    }
+
+    /** GET /api/v2/daily-challenge/schedule (staff) -- yesterday, today and everything scheduled after, with map details. */
+    public void handleSchedule(@NotNull Context ctx) {
+        if (requireStaff(ctx) == null) return;
+
+        List<Map<String, Object>> out = new ArrayList<>();
+
+        try (Connection conn = db.getConnection();
+             PreparedStatement st = conn.prepareStatement(
+                     "SELECT * FROM daily_challenges WHERE day >= DATE_SUB(CURDATE(), INTERVAL 1 DAY) ORDER BY day LIMIT 120");
+             ResultSet rs = st.executeQuery()) {
+            LocalDate today = LocalDate.now(ZoneOffset.UTC);
+
+            while (rs.next()) {
+                Map<String, Object> row = new LinkedHashMap<>();
+                LocalDate day = rs.getDate("day").toLocalDate();
+                int beatmapId = rs.getInt("beatmap_id");
+
+                row.put("date", day.toString());
+                row.put("is_today", day.equals(today));
+                row.put("beatmap_id", beatmapId);
+                row.put("ruleset_id", rs.getInt("ruleset_id"));
+                row.put("required_mods", parseMods(rs.getString("required_mods")));
+                row.put("allowed_mods", parseMods(rs.getString("allowed_mods")));
+
+                var bm = db.findBeatmapById(beatmapId);
+
+                if (bm != null) {
+                    row.put("set_id", bm.setId);
+                    row.put("artist", bm.artist);
+                    row.put("title", bm.title);
+                    row.put("version", bm.version);
+                    row.put("creator", bm.creator);
+                    row.put("stars", (double) bm.diff);
+                    row.put("length", bm.totalLength);
+                }
+
+                out.add(row);
+            }
+        } catch (SQLException e) {
+            logger.error("Could not read the daily challenge schedule: {}", e.getMessage());
+            ctx.status(500).json(Map.of("error", "Database error"));
+            return;
+        }
+
+        Room live = roomId >= 0 ? multiplayerManager.getRoom(roomId) : null;
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("today", LocalDate.now(ZoneOffset.UTC).toString());
+        body.put("room_live", live != null && !live.isEnded());
+        body.put("challenges", out);
+        ctx.json(body);
     }
 }
