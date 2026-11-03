@@ -48,6 +48,12 @@ public class DailyChallengeService {
     });
 
     private volatile LocalDate roomDay = null;
+
+    /** Whoever wants to hear which room is today's challenge (the metadata hub, which tells the game clients). */
+    private volatile java.util.function.Consumer<Long> listener;
+    /** The room last passed to the listener, so it is only told about changes. */
+    private volatile Long published;
+    private volatile boolean publishedOnce = false;
     private volatile long roomId = -1;
 
     public DailyChallengeService(DatabaseManager db, MultiplayerManager multiplayerManager, AuthService authService,
@@ -58,6 +64,27 @@ public class DailyChallengeService {
         this.multiplayerManager = multiplayerManager;
         this.authService = authService;
         createTable();
+    }
+
+    public void setListener(java.util.function.Consumer<Long> listener) {
+        this.listener = listener;
+    }
+
+    /** Tells the listener which room is live now (null: none), but only when that is different from last time. */
+    private synchronized void publish() {
+        Room live = roomId >= 0 ? multiplayerManager.getRoom(roomId) : null;
+        Long target = (live != null && !live.isEnded()) ? Long.valueOf(roomId) : null;
+
+        if (publishedOnce && java.util.Objects.equals(target, published)) return;
+
+        publishedOnce = true;
+        published = target;
+
+        java.util.function.Consumer<Long> l = listener;
+
+        if (l != null) {
+            l.accept(target);
+        }
     }
 
     public void start() {
@@ -114,11 +141,17 @@ public class DailyChallengeService {
             if (existing != null && !existing.isEnded()) return existing;
         }
         Entry entry = load(today);
-        if (entry == null) return null;
+        if (entry == null) {
+            publish();
+            return null;
+        }
 
         ZonedDateTime now = ZonedDateTime.now(ZoneOffset.UTC);
         long minutes = Duration.between(now, now.toLocalDate().plusDays(1).atStartOfDay(ZoneOffset.UTC)).toMinutes() - 2;
-        if (minutes < 1) return null;
+        if (minutes < 1) {
+            publish();
+            return null;
+        }
 
         var item = new com.osuserverlist.lazer.models.MultiplayerRoomData.PlaylistItem();
         item.beatmapId = entry.beatmapId();
@@ -133,6 +166,7 @@ public class DailyChallengeService {
         roomDay = today;
         roomId = room.roomId;
         logger.info("Created daily challenge room {} for {} (beatmap {}, ruleset {})", room.roomId, today, entry.beatmapId(), entry.rulesetId());
+        publish();
         return room;
     }
 
@@ -254,6 +288,7 @@ public class DailyChallengeService {
 
         roomDay = null;
         roomId = -1;
+        publish();
     }
 
     /** DELETE /api/v2/daily-challenge?date=YYYY-MM-DD (staff) */
