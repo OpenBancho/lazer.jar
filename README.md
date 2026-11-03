@@ -76,6 +76,7 @@
 - [x] **Replay File Serving** (`/api/v2/scores/{score_id}/download`)
   - [x] Storing `.osr` files on disk (`data/replays/{id}.osr`, built from spectator frames; S3 not supported)
   - [x] Streaming replay files to client for leaderboard replay viewing (+ replay view counter)
+- [x] **Beatmap favourites, ratings & tag voting** (`/beatmapsets/{id}/favourites|ratings`, `/me/beatmapset-favourites`, `/tags`, `/beatmaps/{id}/tags/{tag}`)
 - [x] **Score pins** (`/api/v2/score-pins/{id}` PUT/DELETE/reorder, `/users/{id}/scores/pinned`)
 - [x] **Beatmap attributes** (`POST /api/v2/beatmaps/{id}/attributes`, star rating + osu! skill breakdown)
 - [x] **Score lookup** (`/api/v2/scores/{id}`, `/scores/{ruleset}/{id}`, `/beatmaps/{id}/scores/users/{user_id}[/all]`)
