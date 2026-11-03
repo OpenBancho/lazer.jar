@@ -369,6 +369,26 @@ public class BeatmapHandler {
         ctx.status(404).json(Map.of("error", "Beatmap not found"));
     }
 
+    /**
+     * The "covers" object of a beatmapset.
+     *
+     * <p>All eight keys matter: the osu!(lazer) client reads its high-resolution fields from the "@2x" ones
+     * ("cover@2x" fills BeatmapSetOnlineCovers.Cover, which is what the daily challenge intro, score cards and the
+     * beatmap overlay draw), while the plain keys only fill the low-resolution fields. A covers object without the
+     * "@2x" keys therefore looks fine in JSON and shows no picture in the game.
+     */
+    public static Map<String, String> coversOf(int setId) {
+        String base = "https://assets.ppy.sh/beatmaps/" + setId + "/covers/";
+        Map<String, String> covers = new LinkedHashMap<>();
+
+        for (String name : new String[]{"cover", "card", "list", "slimcover"}) {
+            covers.put(name, base + name + ".jpg");
+            covers.put(name + "@2x", base + name + "@2x.jpg");
+        }
+
+        return covers;
+    }
+
     public Map<String, Object> formatBeatmapset(int setId, List<BeatmapRecord> maps) {
         BeatmapRecord main = maps.get(0);
 
@@ -394,16 +414,7 @@ public class BeatmapHandler {
         set.put("last_updated", "2026-01-01T00:00:00Z");
         set.put("preview_url", "https://b.ppy.sh/preview/" + setId + ".mp3");
 
-        Map<String, String> covers = new LinkedHashMap<>();
-        covers.put("cover", "https://assets.ppy.sh/beatmaps/" + setId + "/covers/cover.jpg");
-        covers.put("cover@2x", "https://assets.ppy.sh/beatmaps/" + setId + "/covers/cover@2x.jpg");
-        covers.put("card", "https://assets.ppy.sh/beatmaps/" + setId + "/covers/card.jpg");
-        covers.put("card@2x", "https://assets.ppy.sh/beatmaps/" + setId + "/covers/card@2x.jpg");
-        covers.put("list", "https://assets.ppy.sh/beatmaps/" + setId + "/covers/list.jpg");
-        covers.put("list@2x", "https://assets.ppy.sh/beatmaps/" + setId + "/covers/list@2x.jpg");
-        covers.put("slimcover", "https://assets.ppy.sh/beatmaps/" + setId + "/covers/slimcover.jpg");
-        covers.put("slimcover@2x", "https://assets.ppy.sh/beatmaps/" + setId + "/covers/slimcover@2x.jpg");
-        set.put("covers", covers);
+        set.put("covers", coversOf(setId));
 
         List<Map<String, Object>> beatmapsList = new ArrayList<>();
         for (BeatmapRecord bm : maps) {

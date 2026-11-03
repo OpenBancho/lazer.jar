@@ -840,13 +840,7 @@ public class RoomHandler implements Handler {
         bms.put("creator", "Unknown");
         bms.put("status", "ranked");
 
-        Map<String, Object> covers = new LinkedHashMap<>();
-        String baseCover = "https://assets.ppy.sh/beatmaps/" + id + "/covers/";
-        covers.put("cover", baseCover + "cover.jpg");
-        covers.put("card", baseCover + "card.jpg");
-        covers.put("list", baseCover + "list.jpg");
-        covers.put("slimcover", baseCover + "slimcover.jpg");
-        bms.put("covers", covers);
+        bms.put("covers", BeatmapHandler.coversOf(id));
 
         bm.put("beatmapset", bms);
         return bm;
@@ -881,13 +875,7 @@ public class RoomHandler implements Handler {
         bms.put("creator", br.creator);
         bms.put("status", BeatmapHandler.statusToString(br.status));
 
-        Map<String, Object> covers = new LinkedHashMap<>();
-        String baseCover = "https://assets.ppy.sh/beatmaps/" + br.setId + "/covers/";
-        covers.put("cover", baseCover + "cover.jpg");
-        covers.put("card", baseCover + "card.jpg");
-        covers.put("list", baseCover + "list.jpg");
-        covers.put("slimcover", baseCover + "slimcover.jpg");
-        bms.put("covers", covers);
+        bms.put("covers", BeatmapHandler.coversOf(br.setId));
         return bms;
     }
 
