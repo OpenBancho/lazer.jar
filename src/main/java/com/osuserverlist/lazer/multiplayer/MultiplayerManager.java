@@ -36,6 +36,22 @@ public class MultiplayerManager {
     private final Map<Long, RoomScoreToken> scoreTokens = new ConcurrentHashMap<>();
 
     /** Told whenever a score lands in a playlist room (the metadata hub passes it on to the clients watching the room). */
+    /** Rooms the server runs by itself (the daily challenge): no host, and they end by the clock, not by emptying out. */
+    private static boolean isServerOwned(Room room) {
+        return "daily_challenge".equalsIgnoreCase(room.category);
+    }
+
+    /** Asked to keep a score of a daily challenge room, so that the leaderboard outlives the room (and a restart of the server). */
+    public interface ScorePersister {
+        void persist(Room room, long playlistItemId, Map<String, Object> scoreMap, int userId);
+    }
+
+    private volatile ScorePersister scorePersister;
+
+    public void setScorePersister(ScorePersister persister) {
+        this.scorePersister = persister;
+    }
+
     public interface ScoreSetListener {
         void onScoreSet(long roomId, long playlistItemId, long scoreId, int userId, long totalScore, Integer newRank);
     }
@@ -254,8 +270,8 @@ public class MultiplayerManager {
             room.recentParticipants.add(userId);
             userActiveRoom.put(userId, roomId);
 
-            // If no host, assign new user as host
-            if (room.hostUserId <= 0 || !room.users.containsKey(room.hostUserId)) {
+            // If no host, assign new user as host. Not in the daily challenge: that room is the server's, it has no host.
+            if (!isServerOwned(room) && (room.hostUserId <= 0 || !room.users.containsKey(room.hostUserId))) {
                 room.hostUserId = userId;
             }
 
@@ -278,6 +294,11 @@ public class MultiplayerManager {
         if (removed != null) {
             addEvent(roomId, userId, null, "user_left", Map.of());
             logger.info("User {} left room {}", userId, roomId);
+        }
+
+        // The daily challenge stays open until its day ends, whoever comes and goes: closing it would throw its leaderboard away.
+        if (isServerOwned(room)) {
+            return removed;
         }
 
         // If host left, elect new host or close room
@@ -495,6 +516,20 @@ public class MultiplayerManager {
 
     public void recordScore(long roomId, long playlistItemId, Map<String, Object> scoreMap, int userId,
                             long totalScore, double accuracy, int maxCombo, float pp) {
+        recordScore(roomId, playlistItemId, scoreMap, userId, totalScore, accuracy, maxCombo, pp, true);
+    }
+
+    /**
+     * Puts a score that was set earlier back into a room: it counts for the leaderboard and the attempts exactly as when it was set,
+     * but nobody is told about it and it is not stored a second time.
+     */
+    public void restoreScore(long roomId, long playlistItemId, Map<String, Object> scoreMap, int userId,
+                             long totalScore, double accuracy, int maxCombo, float pp) {
+        recordScore(roomId, playlistItemId, scoreMap, userId, totalScore, accuracy, maxCombo, pp, false);
+    }
+
+    private void recordScore(long roomId, long playlistItemId, Map<String, Object> scoreMap, int userId,
+                             long totalScore, double accuracy, int maxCombo, float pp, boolean live) {
         Map<Long, List<Map<String, Object>>> roomScoreMap = roomScores.computeIfAbsent(roomId, k -> new ConcurrentHashMap<>());
         List<Map<String, Object>> list = roomScoreMap.computeIfAbsent(playlistItemId, k -> new CopyOnWriteArrayList<>());
 
@@ -539,11 +574,25 @@ public class MultiplayerManager {
             room.lastActivity = System.currentTimeMillis();
         }
 
+        if (!live) {
+            return;
+        }
+
         addEvent(roomId, userId, playlistItemId, "score_submitted", Map.of(
                 "score_id", scoreMap.getOrDefault("id", 0),
                 "total_score", totalScore,
                 "accuracy", accuracy
         ));
+
+        ScorePersister persister = scorePersister;
+
+        if (persister != null && room != null && isServerOwned(room)) {
+            try {
+                persister.persist(room, playlistItemId, scoreMap, userId);
+            } catch (Exception e) {
+                logger.warn("Could not keep a score of room {}: {}", roomId, e.getMessage());
+            }
+        }
 
         ScoreSetListener listener = scoreSetListener;
 
