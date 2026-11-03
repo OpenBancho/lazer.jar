@@ -96,6 +96,61 @@ public class PerformanceCalculator {
         return fallbackPp(fallbackDiff, totalScore);
     }
 
+    private static final java.util.Map<String, java.util.Map<String, Object>> ATTRIBUTE_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Difficulty attributes of a beatmap under a mod combination (star rating, max combo and, for osu!standard,
+     * the skill breakdown). Returns null if the map file or the native calculator is unavailable.
+     */
+    public static java.util.Map<String, Object> difficultyAttributes(long beatmapId, int rulesetId, int modsBitmask) {
+        String key = beatmapId + ":" + rulesetId + ":" + modsBitmask;
+        java.util.Map<String, Object> cached = ATTRIBUTE_CACHE.get(key);
+        if (cached != null) return cached;
+
+        byte[] mapBytes = getOrDownloadMap(beatmapId);
+        if (mapBytes == null || mapBytes.length == 0) return null;
+
+        try {
+            Beatmap beatmap = Beatmap.fromBytes(mapBytes);
+            try {
+                Ruleset ruleset = Ruleset.fromId(rulesetId % 4);
+                var diffCalc = DifficultyCalculatorFactory.create(ruleset, beatmap);
+                ModsCollection mods = ModsCollection.create();
+                for (String modStr : convertModsBitmask(modsBitmask)) {
+                    try {
+                        mods.add(Mod.create(modStr));
+                    } catch (Exception ignored) {}
+                }
+                DifficultyAttributes attr = diffCalc.calculate(mods);
+                java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
+                out.put("star_rating", attr.getStarRating());
+                out.put("max_combo", attr.getMaxCombo());
+                if (attr instanceof io.github.nanamochi.osu_native.wrapper.attributes.difficulty.OsuDifficultyAttributes o) {
+                    out.put("aim_difficulty", o.getAimDifficulty());
+                    out.put("aim_difficult_slider_count", o.getAimDifficultSliderCount());
+                    out.put("speed_difficulty", o.getSpeedDifficulty());
+                    out.put("speed_note_count", o.getSpeedNoteCount());
+                    out.put("flashlight_difficulty", o.getFlashlightDifficulty());
+                    out.put("slider_factor", o.getSliderFactor());
+                    out.put("aim_difficult_strain_count", o.getAimDifficultStrainCount());
+                    out.put("speed_difficult_strain_count", o.getSpeedDifficultStrainCount());
+                    out.put("drain_rate", o.getDrainRate());
+                    out.put("hit_circle_count", o.getHitCircleCount());
+                    out.put("slider_count", o.getSliderCount());
+                    out.put("spinner_count", o.getSpinnerCount());
+                }
+                if (ATTRIBUTE_CACHE.size() > 5000) ATTRIBUTE_CACHE.clear();
+                ATTRIBUTE_CACHE.put(key, out);
+                return out;
+            } finally {
+                beatmap.close();
+            }
+        } catch (Exception e) {
+            logger.warn("Difficulty attribute calculation failed for map {}: {}", beatmapId, e.getMessage());
+            return null;
+        }
+    }
+
     private static byte[] getOrDownloadMap(long beatmapId) {
         try {
             // 1. Check local data/maps
