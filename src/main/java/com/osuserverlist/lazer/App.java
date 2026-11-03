@@ -63,6 +63,7 @@ public class App {
         ContentHandler contentHandler = new ContentHandler(authService, databaseManager, config);
         ScoreHandler scoreHandler = new ScoreHandler(authService, databaseManager, config);
         BeatmapHandler beatmapHandler = new BeatmapHandler(databaseManager, config);
+        BeatmapPackHandler beatmapPackHandler = new BeatmapPackHandler(authService, databaseManager, beatmapHandler);
         UserExtrasHandler userExtrasHandler = new UserExtrasHandler(databaseManager, beatmapHandler, beatmapSocialHandler, config);
         RankingsHandler rankingsHandler = new RankingsHandler(databaseManager, config);
         SearchHandler searchHandler = new SearchHandler(databaseManager, onlineManager, config);
@@ -185,6 +186,10 @@ public class App {
             javalinConfig.routes.get("/api/v2/beatmaps", beatmapHandler::handleGetBeatmaps);
             javalinConfig.routes.get("/api/v2/beatmaps/", beatmapHandler::handleGetBeatmaps);
             javalinConfig.routes.get("/api/v2/beatmaps/lookup", beatmapHandler::handleLookupBeatmap);
+            javalinConfig.routes.get("/api/v2/beatmaps/packs", beatmapPackHandler::handleList);
+            javalinConfig.routes.put("/api/v2/beatmaps/packs", beatmapPackHandler::handlePut);
+            javalinConfig.routes.get("/api/v2/beatmaps/packs/{tag}/download", beatmapPackHandler::handleDownload);
+            javalinConfig.routes.get("/api/v2/beatmaps/packs/{tag}", beatmapPackHandler::handleGet);
             javalinConfig.routes.get("/api/v2/beatmaps/{beatmap_id}", beatmapHandler::handleGetBeatmap);
             javalinConfig.routes.post("/api/v2/beatmaps/{beatmap_id}/attributes", beatmapHandler::handleBeatmapAttributes);
             javalinConfig.routes.post("/api/v2/beatmapsets/{beatmapset_id}/favourites", beatmapSocialHandler::handleFavourite);

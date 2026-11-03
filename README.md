@@ -118,8 +118,8 @@
 
 ### 6. Beatmap Packs & Daily Challenges
 - [ ] **Beatmap Packs** (`/api/v2/beatmaps/packs`)
-  - [ ] Pack categories (Theme, Standard, Chart, Spotlight)
-  - [ ] Direct pack archive downloading
+  - [x] Pack categories (standard, featured_artist, tournament, loved, chart, theme, artist; staff `PUT`)
+  - [x] Direct pack archive downloading (`/beatmaps/packs/{tag}/download` redirects to the configured archive URL)
 - [ ] **Daily Challenge**
   - [x] Daily featured beatmap selection (`GET/PUT /api/v2/daily-challenge`, staff schedule per UTC day; room auto-created)
   - [ ] Daily challenge leaderboards & special streaks
