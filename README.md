@@ -120,7 +120,7 @@
   - [ ] Pack categories (Theme, Standard, Chart, Spotlight)
   - [ ] Direct pack archive downloading
 - [ ] **Daily Challenge**
-  - [ ] Daily featured beatmap selection
+  - [x] Daily featured beatmap selection (`GET/PUT /api/v2/daily-challenge`, staff schedule per UTC day; room auto-created)
   - [ ] Daily challenge leaderboards & special streaks
 
 ---
