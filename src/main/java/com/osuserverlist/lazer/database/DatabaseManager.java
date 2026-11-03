@@ -153,6 +153,26 @@ public class DatabaseManager {
         }
     }
 
+    /**
+     * Sets privilege bits on an account, leaving the others as they are. Returns true when the account did not
+     * have all of them yet, so a caller can tell the first time from every later one.
+     */
+    public boolean grantPrivileges(int userId, int bits) {
+        if (userId <= 0 || bits == 0) return false;
+        String sql = "UPDATE users SET priv = priv | ? WHERE id = ? AND (priv & ?) <> ?";
+        try (Connection conn = getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setInt(1, bits);
+            stmt.setInt(2, userId);
+            stmt.setInt(3, bits);
+            stmt.setInt(4, bits);
+            return stmt.executeUpdate() > 0;
+        } catch (SQLException e) {
+            logger.warn("Error granting privileges {} to user {}: {}", bits, userId, e.getMessage());
+            return false;
+        }
+    }
+
     public UserStatistics findUserStats(int userId, int mode) {
         String sql = """
                 SELECT s.*,
