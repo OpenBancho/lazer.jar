@@ -9,6 +9,9 @@ public class ServerConfig {
     public final String serverName;
     public final String serverVersion;
 
+    /** Where .osr replays are kept; empty = next to a sibling bancho.jar, else ./data/replays */
+    public final String replaysDir;
+
     public final String dbHost;
     public final int dbPort;
     public final String dbUser;
@@ -40,6 +43,7 @@ public class ServerConfig {
         this.redisPass = dotenv.get("REDIS_PASS", "");
         this.redisDb = Integer.parseInt(dotenv.get("REDIS_DB", "0"));
 
+        this.replaysDir = dotenv.get("REPLAYS_DIR", "");
         this.osuApiKey = dotenv.get("OSU_API_KEY", "3f8616cb3488e3ed1cec4a8fd3501cebeb506ee5");
         this.directSearch = dotenv.get("DIRECT_SEARCH", "https://osu.direct/api/search");
         this.directSearchV2 = dotenv.get("DIRECT_SEARCH_V2", "https://catboy.best/api/v2/search");

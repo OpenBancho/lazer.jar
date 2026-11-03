@@ -31,6 +31,7 @@ public class App {
 
         Dotenv dotenv = Dotenv.configure().ignoreIfMissing().load();
         ServerConfig config = new ServerConfig(dotenv);
+        com.osuserverlist.lazer.replay.ReplayStore.configure(config.replaysDir);
 
         DatabaseManager databaseManager = new DatabaseManager();
         databaseManager.init(config);
