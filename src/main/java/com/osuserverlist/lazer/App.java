@@ -62,6 +62,7 @@ public class App {
         ContentHandler contentHandler = new ContentHandler(authService, databaseManager, config);
         ScoreHandler scoreHandler = new ScoreHandler(authService, databaseManager, config);
         BeatmapHandler beatmapHandler = new BeatmapHandler(databaseManager, config);
+        UserExtrasHandler userExtrasHandler = new UserExtrasHandler(databaseManager, beatmapHandler, beatmapSocialHandler, config);
         RankingsHandler rankingsHandler = new RankingsHandler(databaseManager, config);
         SearchHandler searchHandler = new SearchHandler(databaseManager, onlineManager, config);
         com.osuserverlist.lazer.multiplayer.MultiplayerManager multiplayerManager = new com.osuserverlist.lazer.multiplayer.MultiplayerManager(databaseManager);
@@ -136,11 +137,12 @@ public class App {
             // Users info & stats
             javalinConfig.routes.get("/api/v2/users/{user_id}", userHandler);
             javalinConfig.routes.get("/api/v2/users/{user_id}/", userHandler);
-            javalinConfig.routes.get("/api/v2/users/{user_id}/{ruleset}", userHandler);
-            javalinConfig.routes.get("/api/v2/users/{user_id}/recent_activity", ctx -> ctx.json(java.util.Collections.emptyList()));
+            javalinConfig.routes.get("/api/v2/users/{user_id}/recent_activity", userExtrasHandler::handleRecentActivity);
+            javalinConfig.routes.get("/api/v2/users/{user_id}/beatmaps-passed", userExtrasHandler::handleBeatmapsPassed);
             javalinConfig.routes.get("/api/v2/users/{user_id}/scores/{type}", userScoresHandler);
-            javalinConfig.routes.get("/api/v2/users/{user_id}/beatmapsets/{type}", ctx -> ctx.json(java.util.Collections.emptyList()));
+            javalinConfig.routes.get("/api/v2/users/{user_id}/beatmapsets/{type}", userExtrasHandler::handleBeatmapsets);
             javalinConfig.routes.get("/api/v2/users/{user_id}/kudosu", ctx -> ctx.json(java.util.Collections.emptyList()));
+            javalinConfig.routes.get("/api/v2/users/{user_id}/{ruleset}", userHandler);
 
             // Rankings & Leaderboards
             javalinConfig.routes.get("/api/v2/rankings/{ruleset}/{type}", rankingsHandler::handleGetRankings);
@@ -176,12 +178,12 @@ public class App {
             javalinConfig.routes.post("/api/v2/score-pins/{score_id}/reorder", scoreHandler::handleReorderPin);
             javalinConfig.routes.get("/api/v2/scores/{score}", scoreHandler::handleGetScore);
             javalinConfig.routes.get("/api/v2/scores/{ruleset}/{score}", scoreHandler::handleGetScore);
-            javalinConfig.routes.get("/api/v2/beatmapsets/{beatmapset_id}", beatmapHandler::handleGetBeatmapset);
             javalinConfig.routes.get("/api/v2/beatmapsets/lookup", beatmapHandler::handleLookupBeatmapset);
+            javalinConfig.routes.get("/api/v2/beatmapsets/{beatmapset_id}", beatmapHandler::handleGetBeatmapset);
             javalinConfig.routes.get("/api/v2/beatmaps", beatmapHandler::handleGetBeatmaps);
             javalinConfig.routes.get("/api/v2/beatmaps/", beatmapHandler::handleGetBeatmaps);
-            javalinConfig.routes.get("/api/v2/beatmaps/{beatmap_id}", beatmapHandler::handleGetBeatmap);
             javalinConfig.routes.get("/api/v2/beatmaps/lookup", beatmapHandler::handleLookupBeatmap);
+            javalinConfig.routes.get("/api/v2/beatmaps/{beatmap_id}", beatmapHandler::handleGetBeatmap);
             javalinConfig.routes.post("/api/v2/beatmaps/{beatmap_id}/attributes", beatmapHandler::handleBeatmapAttributes);
             javalinConfig.routes.post("/api/v2/beatmapsets/{beatmapset_id}/favourites", beatmapSocialHandler::handleFavourite);
             javalinConfig.routes.post("/api/v2/beatmapsets/{beatmapset_id}/ratings", beatmapSocialHandler::handleRate);
