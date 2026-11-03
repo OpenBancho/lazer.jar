@@ -62,6 +62,7 @@ public class UserHandler implements Handler {
         int followerCount = databaseManager.findFollowerCount(user.id);
         DatabaseManager.ScoreCounts scoreCounts = databaseManager.findScoreCounts(user.id, mode);
         Map<String, Object> resp = UserResponseBuilder.buildUserResponse(user, stats, mode, config, followerCount, scoreCounts, isOnline);
+        ProfileExtras.enrich(resp, user, stats, mode);
         ctx.status(200);
         ctx.contentType("application/json");
         ctx.json(resp);

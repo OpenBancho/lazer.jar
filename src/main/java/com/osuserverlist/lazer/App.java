@@ -58,6 +58,7 @@ public class App {
         AnticheatFlagHandler anticheatFlagHandler = new AnticheatFlagHandler(config, databaseManager);
         AnticheatVouchHandler anticheatVouchHandler = new AnticheatVouchHandler(authService, databaseManager, new com.osuserverlist.lazer.anticheat.AnticheatVouchClient(config));
         SoloScoreHandler soloScoreHandler = new SoloScoreHandler(authService, databaseManager, config, spectatorHub, anticheatFlagHandler.signatureTracker());
+        ProfileExtras profileExtras = new ProfileExtras(databaseManager, authService);
         BeatmapSocialHandler beatmapSocialHandler = new BeatmapSocialHandler(authService, databaseManager);
         ContentHandler contentHandler = new ContentHandler(authService, databaseManager, config);
         ScoreHandler scoreHandler = new ScoreHandler(authService, databaseManager, config);
@@ -137,6 +138,7 @@ public class App {
             // Users info & stats
             javalinConfig.routes.get("/api/v2/users/{user_id}", userHandler);
             javalinConfig.routes.get("/api/v2/users/{user_id}/", userHandler);
+            javalinConfig.routes.put("/api/v2/users/{user_id}/page", profileExtras::handlePutPage);
             javalinConfig.routes.get("/api/v2/users/{user_id}/recent_activity", userExtrasHandler::handleRecentActivity);
             javalinConfig.routes.get("/api/v2/users/{user_id}/beatmaps-passed", userExtrasHandler::handleBeatmapsPassed);
             javalinConfig.routes.get("/api/v2/users/{user_id}/scores/{type}", userScoresHandler);
