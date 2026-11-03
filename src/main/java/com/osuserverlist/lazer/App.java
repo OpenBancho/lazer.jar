@@ -58,6 +58,7 @@ public class App {
         AnticheatFlagHandler anticheatFlagHandler = new AnticheatFlagHandler(config, databaseManager);
         AnticheatVouchHandler anticheatVouchHandler = new AnticheatVouchHandler(authService, databaseManager, new com.osuserverlist.lazer.anticheat.AnticheatVouchClient(config));
         SoloScoreHandler soloScoreHandler = new SoloScoreHandler(authService, databaseManager, config, spectatorHub, anticheatFlagHandler.signatureTracker());
+        BeatmapSocialHandler beatmapSocialHandler = new BeatmapSocialHandler(authService, databaseManager);
         ScoreHandler scoreHandler = new ScoreHandler(authService, databaseManager, config);
         BeatmapHandler beatmapHandler = new BeatmapHandler(databaseManager, config);
         RankingsHandler rankingsHandler = new RankingsHandler(databaseManager, config);
@@ -115,10 +116,10 @@ public class App {
             javalinConfig.routes.post("/api/v2/oauth/token", oauthHandler);
 
             // API v2 Me endpoints
+            javalinConfig.routes.get("/api/v2/me/beatmapset-favourites", beatmapSocialHandler::handleMyFavourites);
             javalinConfig.routes.get("/api/v2/me", meHandler);
             javalinConfig.routes.get("/api/v2/me/", meHandler);
             javalinConfig.routes.get("/api/v2/me/{ruleset}", meHandler);
-            javalinConfig.routes.get("/api/v2/me/beatmapset-favourites", miscHandler);
 
             // Dashboard & User Search & Batch Lookup
             javalinConfig.routes.get("/api/v2/search", searchHandler);
@@ -180,6 +181,11 @@ public class App {
             javalinConfig.routes.get("/api/v2/beatmaps/{beatmap_id}", beatmapHandler::handleGetBeatmap);
             javalinConfig.routes.get("/api/v2/beatmaps/lookup", beatmapHandler::handleLookupBeatmap);
             javalinConfig.routes.post("/api/v2/beatmaps/{beatmap_id}/attributes", beatmapHandler::handleBeatmapAttributes);
+            javalinConfig.routes.post("/api/v2/beatmapsets/{beatmapset_id}/favourites", beatmapSocialHandler::handleFavourite);
+            javalinConfig.routes.post("/api/v2/beatmapsets/{beatmapset_id}/ratings", beatmapSocialHandler::handleRate);
+            javalinConfig.routes.get("/api/v2/tags", beatmapSocialHandler::handleAllTags);
+            javalinConfig.routes.put("/api/v2/beatmaps/{beatmap_id}/tags/{tag_id}", beatmapSocialHandler::handleTagVote);
+            javalinConfig.routes.delete("/api/v2/beatmaps/{beatmap_id}/tags/{tag_id}", beatmapSocialHandler::handleTagVote);
 
             // Friends & Blocks
             javalinConfig.routes.get("/api/v2/friends", relationshipsHandler);
