@@ -54,6 +54,7 @@ public class ServerConfig {
 
         this.acWebhookFlags = dotenv.get("AC_WEBHOOK_FLAGS", "");
         this.acApiKeys = dotenv.get("AC_API_KEYS", "");
+        this.staffApiKeys = dotenv.get("STAFF_API_KEYS", "");
         this.acSigningPublicKey = dotenv.get("AC_SIGNING_PUBLIC_KEY", "");
         // CLIENT_MODE decides which client this server supports:
         //   strict    - only the anti-cheat client: every login needs the anti-cheat handshake ticket, scores need its signature
@@ -92,6 +93,8 @@ public class ServerConfig {
     // and are logged to this webhook.
     public final String acWebhookFlags;
     public final String acApiKeys;
+    /** Keys (comma separated, 24+ characters each) that let another of our services, e.g. the website, act as staff. */
+    public final String staffApiKeys;
     // Ed25519 public key (base64) of the anti-cheat server; scores must be confirmed with its signature.
     public final String acSigningPublicKey;
     // true: strict server (anti-cheat client required), false: nonstrict server (anti-cheat not involved)

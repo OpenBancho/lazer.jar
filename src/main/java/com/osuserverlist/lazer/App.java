@@ -69,7 +69,7 @@ public class App {
         RankingsHandler rankingsHandler = new RankingsHandler(databaseManager, config);
         SearchHandler searchHandler = new SearchHandler(databaseManager, onlineManager, config);
         com.osuserverlist.lazer.multiplayer.MultiplayerManager multiplayerManager = new com.osuserverlist.lazer.multiplayer.MultiplayerManager(databaseManager);
-        com.osuserverlist.lazer.multiplayer.DailyChallengeService dailyChallengeService = new com.osuserverlist.lazer.multiplayer.DailyChallengeService(databaseManager, multiplayerManager, authService);
+        com.osuserverlist.lazer.multiplayer.DailyChallengeService dailyChallengeService = new com.osuserverlist.lazer.multiplayer.DailyChallengeService(databaseManager, multiplayerManager, authService, config);
         RoomHandler roomHandler = new RoomHandler(authService, databaseManager, multiplayerManager, onlineManager, config, spectatorHub);
         com.osuserverlist.lazer.signalr.MetadataHub metadataHub = new com.osuserverlist.lazer.signalr.MetadataHub(authService, databaseManager, onlineManager);
         com.osuserverlist.lazer.signalr.MultiplayerHub multiplayerHub = new com.osuserverlist.lazer.signalr.MultiplayerHub(authService, databaseManager, multiplayerManager, onlineManager);
@@ -269,6 +269,8 @@ public class App {
 
             javalinConfig.routes.get("/api/v2/daily-challenge", dailyChallengeService::handleGet);
             javalinConfig.routes.put("/api/v2/daily-challenge", dailyChallengeService::handleSet);
+            javalinConfig.routes.delete("/api/v2/daily-challenge", dailyChallengeService::handleDelete);
+            javalinConfig.routes.get("/api/v2/daily-challenge/schedule", dailyChallengeService::handleSchedule);
 
             // Multiplayer Rooms (REST API)
             javalinConfig.routes.get("/api/v2/rooms", roomHandler::handleGetRooms);
