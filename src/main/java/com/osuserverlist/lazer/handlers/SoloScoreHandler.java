@@ -271,7 +271,8 @@ public class SoloScoreHandler {
                 passed,
                 modsBitmask,
                 n300, n100, n50, nmiss, ngeki, nkatu,
-                timeElapsed
+                timeElapsed,
+                modsList
         );
 
         if (!sim.valid) {
@@ -300,7 +301,8 @@ public class SoloScoreHandler {
                 n300, n100, n50, nmiss, ngeki, nkatu,
                 objectCount,
                 timeElapsed,
-                tokenInfo.beatmapHash
+                tokenInfo.beatmapHash,
+                modsList
         );
 
         if (submitResult == null || submitResult.score == null) {

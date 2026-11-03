@@ -588,7 +588,8 @@ public class RoomHandler implements Handler {
                 passed,
                 modsBitmask,
                 n300, n100, n50, nmiss, ngeki, nkatu,
-                timeElapsed
+                timeElapsed,
+                modsList
         );
 
         if (sim.valid) {
@@ -612,7 +613,8 @@ public class RoomHandler implements Handler {
                 n300, n100, n50, nmiss, ngeki, nkatu,
                 objectCount,
                 timeElapsed,
-                token.beatmapHash
+                token.beatmapHash,
+                modsList
         );
 
         long scoreId = (submitResult != null && submitResult.score != null) ? submitResult.score.id : System.currentTimeMillis();

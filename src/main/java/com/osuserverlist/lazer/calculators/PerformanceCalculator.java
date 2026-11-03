@@ -42,6 +42,30 @@ public class PerformanceCalculator {
             float fallbackDiff,
             long totalScore
     ) {
+        return calculatePp(beatmapId, rulesetId, modsBitmask, maxCombo, accuracy, n300, n100, n50, nmiss, ngeki, nkatu,
+                fallbackDiff, totalScore, null);
+    }
+
+    /**
+     * @param apiMods the mods as the client sent them (acronym + settings, e.g. Rate Adjust's speed_change or
+     *                Difficulty Adjust's overrides). When null only the bitmask is used.
+     */
+    public static float calculatePp(
+            long beatmapId,
+            int rulesetId,
+            int modsBitmask,
+            int maxCombo,
+            float accuracy,
+            int n300,
+            int n100,
+            int n50,
+            int nmiss,
+            int ngeki,
+            int nkatu,
+            float fallbackDiff,
+            long totalScore,
+            List<?> apiMods
+    ) {
         if (!com.osuserverlist.lazer.handlers.UserResponseBuilder.isScoreRankedForPp(null, modsBitmask, rulesetId)) {
             return 0.0f;
         }
@@ -74,12 +98,7 @@ public class PerformanceCalculator {
             scoreInfo.setCountPerfect(ngeki);
             scoreInfo.setCountGood(nkatu);
 
-            ModsCollection mods = ModsCollection.create();
-            for (String modStr : convertModsBitmask(modsBitmask)) {
-                try {
-                    mods.add(Mod.create(modStr));
-                } catch (Exception ignored) {}
-            }
+            ModsCollection mods = buildMods(modsBitmask, apiMods);
 
             DifficultyAttributes diffAttr = diffCalc.calculate(mods);
             PerformanceAttributes perfAttr = ppCalc.calculate(ruleset, beatmap, mods, scoreInfo, diffAttr);
@@ -102,8 +121,8 @@ public class PerformanceCalculator {
      * Difficulty attributes of a beatmap under a mod combination (star rating, max combo and, for osu!standard,
      * the skill breakdown). Returns null if the map file or the native calculator is unavailable.
      */
-    public static java.util.Map<String, Object> difficultyAttributes(long beatmapId, int rulesetId, int modsBitmask) {
-        String key = beatmapId + ":" + rulesetId + ":" + modsBitmask;
+    public static java.util.Map<String, Object> difficultyAttributes(long beatmapId, int rulesetId, int modsBitmask, List<?> apiMods) {
+        String key = beatmapId + ":" + rulesetId + ":" + modsBitmask + ":" + settingsKey(apiMods);
         java.util.Map<String, Object> cached = ATTRIBUTE_CACHE.get(key);
         if (cached != null) return cached;
 
@@ -115,12 +134,7 @@ public class PerformanceCalculator {
             try {
                 Ruleset ruleset = Ruleset.fromId(rulesetId % 4);
                 var diffCalc = DifficultyCalculatorFactory.create(ruleset, beatmap);
-                ModsCollection mods = ModsCollection.create();
-                for (String modStr : convertModsBitmask(modsBitmask)) {
-                    try {
-                        mods.add(Mod.create(modStr));
-                    } catch (Exception ignored) {}
-                }
+                ModsCollection mods = buildMods(modsBitmask, apiMods);
                 DifficultyAttributes attr = diffCalc.calculate(mods);
                 java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
                 out.put("star_rating", attr.getStarRating());
@@ -194,6 +208,68 @@ public class PerformanceCalculator {
             logger.warn("Failed to get/download map {}: {}", beatmapId, e.getMessage());
         }
         return null;
+    }
+
+    /** Stable cache key for the settings part of a mod list. */
+    private static String settingsKey(List<?> apiMods) {
+        if (apiMods == null) return "";
+        StringBuilder sb = new StringBuilder();
+        for (Object o : apiMods) {
+            if (o instanceof java.util.Map<?, ?> m && m.get("settings") instanceof java.util.Map<?, ?> st && !st.isEmpty()) {
+                sb.append(m.get("acronym")).append(new java.util.TreeMap<>(st)).append(';');
+            }
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Builds the native mod collection. With API mods the settings travel along (Rate Adjust / Difficulty Adjust and
+     * the settings of DT/HT/HR...); otherwise, or if none could be created, the legacy bitmask is used.
+     */
+    private static ModsCollection buildMods(int modsBitmask, List<?> apiMods) {
+        ModsCollection mods = ModsCollection.create();
+        boolean usedApi = false;
+        if (apiMods != null) {
+            for (Object o : apiMods) {
+                String acronym = null;
+                java.util.Map<?, ?> settings = null;
+                if (o instanceof java.util.Map<?, ?> m) {
+                    acronym = m.get("acronym") != null ? m.get("acronym").toString().toUpperCase() : null;
+                    if (m.get("settings") instanceof java.util.Map<?, ?> st) settings = st;
+                } else if (o instanceof String str) {
+                    acronym = str.toUpperCase();
+                }
+                if (acronym == null || acronym.isBlank()) continue;
+                try {
+                    Mod mod = Mod.create(acronym);
+                    if (settings != null) {
+                        for (var e : settings.entrySet()) {
+                            String name = String.valueOf(e.getKey());
+                            Object v = e.getValue();
+                            try {
+                                if (v instanceof Boolean b) mod.setSettingBoolean(name, b);
+                                else if (v instanceof Integer i) mod.setSettingsInteger(name, i);
+                                else if (v instanceof Number n) mod.setSettingsFloat(name, n.floatValue());
+                            } catch (Exception ex) {
+                                logger.debug("Mod setting {}.{} rejected: {}", acronym, name, ex.getMessage());
+                            }
+                        }
+                    }
+                    mods.add(mod);
+                    usedApi = true;
+                } catch (Exception ex) {
+                    logger.debug("Unknown mod {}: {}", acronym, ex.getMessage());
+                }
+            }
+        }
+        if (!usedApi) {
+            for (String modStr : convertModsBitmask(modsBitmask)) {
+                try {
+                    mods.add(Mod.create(modStr));
+                } catch (Exception ignored) {}
+            }
+        }
+        return mods;
     }
 
     private static List<String> convertModsBitmask(int bitmask) {

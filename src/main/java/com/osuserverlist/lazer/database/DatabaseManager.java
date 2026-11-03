@@ -804,6 +804,29 @@ public class DatabaseManager {
             int timeElapsed,
             String beatmapHash
     ) {
+        return submitScore(userId, beatmapId, rulesetId, totalScore, totalScoreWithoutMods, accuracy, maxCombo, pp, rank,
+                passed, modsBitmask, n300, n100, n50, nmiss, ngeki, nkatu, objectCount, timeElapsed, beatmapHash, null);
+    }
+
+    /** @param apiMods the client's mods with their settings, used for the server-side PP calculation */
+    public ScoreSubmitResult submitScore(
+            int userId,
+            int beatmapId,
+            int rulesetId,
+            long totalScore,
+            long totalScoreWithoutMods,
+            float accuracy,
+            int maxCombo,
+            float pp,
+            String rank,
+            boolean passed,
+            int modsBitmask,
+            int n300, int n100, int n50, int nmiss, int ngeki, int nkatu,
+            int objectCount,
+            int timeElapsed,
+            String beatmapHash,
+            List<?> apiMods
+    ) {
         int effectiveMode = UserResponseBuilder.getEffectiveMode(rulesetId, modsBitmask);
         int baseRuleset = effectiveMode % 4;
 
@@ -850,7 +873,8 @@ public class DatabaseManager {
                 passed,
                 modsBitmask,
                 n300, n100, n50, nmiss, ngeki, nkatu,
-                timeElapsed
+                timeElapsed,
+                apiMods
         );
 
         if (!sim.valid) {
