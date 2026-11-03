@@ -194,6 +194,9 @@ public class MetadataHub {
                 if (session.userId > 0) {
                     onlineManager.markUserActive(session.userId);
                 }
+
+                // The game client handshakes in a binary frame: it has to learn about the daily challenge here too
+                sendDailyChallenge(session);
                 return;
             }
         }
