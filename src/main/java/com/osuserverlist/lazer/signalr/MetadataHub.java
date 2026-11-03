@@ -39,6 +39,9 @@ public class MetadataHub {
 
     private final Map<String, ClientSession> sessions = new ConcurrentHashMap<>();
     private final Map<Integer, Value> userActivities = new ConcurrentHashMap<>();
+
+    /** Room of today's daily challenge, or null when there is none. The client shows its "Daily Challenge" button from it. */
+    private volatile Long dailyChallengeRoomId = null;
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
 
     public static class ClientSession {
@@ -145,6 +148,8 @@ public class MetadataHub {
             if (session.userId > 0) {
                 onlineManager.markUserActive(session.userId);
             }
+
+            sendDailyChallenge(session);
             return;
         }
 
@@ -317,6 +322,56 @@ public class MetadataHub {
         // Default: void completion
         if (invocationId != null) {
             sendVoidCompletion(session, invocationId);
+        }
+    }
+
+    /**
+     * Sets (or clears, with null) the room of the daily challenge and tells every connected client.
+     * Clients that connect later are told right after their handshake.
+     */
+    public void setDailyChallenge(Long roomId) {
+        this.dailyChallengeRoomId = roomId;
+
+        for (ClientSession session : sessions.values()) {
+            if (session.handshaken) {
+                sendDailyChallenge(session);
+            }
+        }
+
+        logger.info("Daily challenge announced to {} metadata client(s): room {}", sessions.size(), roomId);
+    }
+
+    /** DailyChallengeUpdated(DailyChallengeInfo?): [roomId] while a challenge runs, nil when it does not. */
+    private void sendDailyChallenge(ClientSession session) {
+        if (!session.isMessagePack) return;
+
+        try {
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            MessagePacker packer = MessagePack.newDefaultPacker(baos);
+
+            // Invocation: [1, {}, null, "DailyChallengeUpdated", [ info ]]
+            packer.packArrayHeader(5);
+            packer.packInt(1);
+            packer.packMapHeader(0);
+            packer.packNil();
+            packer.packString("DailyChallengeUpdated");
+
+            packer.packArrayHeader(1);
+
+            Long roomId = dailyChallengeRoomId;
+
+            if (roomId == null) {
+                packer.packNil();
+            } else {
+                // DailyChallengeInfo is a MessagePack object with the room id as its only key
+                packer.packArrayHeader(1);
+                packer.packLong(roomId);
+            }
+
+            packer.close();
+            session.ws.send(ByteBuffer.wrap(encodeLengthPrefixed(baos.toByteArray())));
+        } catch (Exception e) {
+            logger.debug("Failed to send DailyChallengeUpdated: {}", e.getMessage());
         }
     }
 

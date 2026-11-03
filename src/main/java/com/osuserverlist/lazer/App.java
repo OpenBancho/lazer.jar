@@ -358,6 +358,8 @@ public class App {
             databaseManager.close();
         }));
 
+        // The game client learns about the daily challenge from the metadata hub, not from the room list
+        dailyChallengeService.setListener(metadataHub::setDailyChallenge);
         dailyChallengeService.start();
         app.start(config.port);
         logger.info("lazer.jar started successfully on port {}", config.port);
