@@ -96,9 +96,9 @@
   - [ ] User custom profile banners & bio page (`/api/v2/users/{id}/extra`)
   - [ ] Badges & title management
   - [ ] User statistics history graphs (rank history, playcount history)
-- [ ] **Comments System** (`/api/v2/comments`)
-  - [ ] Beatmapset & score comments posting
-  - [ ] Comment upvotes, downvotes, and pinned comments
+- [x] **Comments System** (`/api/v2/comments`)
+  - [x] Beatmapset & score comments posting (edit, soft delete, replies)
+  - [x] Comment upvotes (pinned comments: stored, no endpoint yet)
 - [ ] **Beatmap Discussions & Mapping**
   - [ ] Mapping modding discussions (`/api/v2/beatmapsets/discussions`)
   - [ ] Kudosu balance transactions & awarding
@@ -127,10 +127,10 @@
 
 ### 7. Documentation & Platform Services
 - [ ] **Changelog & News**
-  - [ ] News articles listing & markdown rendering (`/api/v2/news`)
-  - [ ] Server build changelog stream (`/api/v2/changelog`)
+  - [x] News articles listing (`/api/v2/news`, staff `PUT`)
+  - [x] Server build changelog stream (`/api/v2/changelog`, staff `PUT`)
 - [ ] **Wiki**
-  - [ ] Server rules, FAQ, and tutorials (`/api/v2/wiki`)
+  - [x] Server rules, FAQ, and tutorials (`/api/v2/wiki/{locale}/{path}`, staff `PUT /api/v2/wiki`)
 
 ---
 

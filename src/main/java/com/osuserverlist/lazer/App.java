@@ -59,6 +59,7 @@ public class App {
         AnticheatVouchHandler anticheatVouchHandler = new AnticheatVouchHandler(authService, databaseManager, new com.osuserverlist.lazer.anticheat.AnticheatVouchClient(config));
         SoloScoreHandler soloScoreHandler = new SoloScoreHandler(authService, databaseManager, config, spectatorHub, anticheatFlagHandler.signatureTracker());
         BeatmapSocialHandler beatmapSocialHandler = new BeatmapSocialHandler(authService, databaseManager);
+        ContentHandler contentHandler = new ContentHandler(authService, databaseManager, config);
         ScoreHandler scoreHandler = new ScoreHandler(authService, databaseManager, config);
         BeatmapHandler beatmapHandler = new BeatmapHandler(databaseManager, config);
         RankingsHandler rankingsHandler = new RankingsHandler(databaseManager, config);
@@ -318,13 +319,21 @@ public class App {
             javalinConfig.routes.ws("/api/v2/notification-server", notificationHub::configureWs);
 
             // Misc & Assets
-            javalinConfig.routes.get("/api/v2/comments", ctx -> ctx.json(Map.of(
-                    "comments", List.of(),
-                    "has_more", false,
-                    "total", 0,
-                    "users", List.of()
-            )));
-            javalinConfig.routes.get("/api/v2/news", ctx -> ctx.json(Map.of("news_posts", List.of())));
+            javalinConfig.routes.get("/api/v2/comments", contentHandler::handleCommentsList);
+            javalinConfig.routes.post("/api/v2/comments", contentHandler::handleCommentPost);
+            javalinConfig.routes.get("/api/v2/comments/{comment}", contentHandler::handleCommentGet);
+            javalinConfig.routes.put("/api/v2/comments/{comment}", contentHandler::handleCommentEdit);
+            javalinConfig.routes.delete("/api/v2/comments/{comment}", contentHandler::handleCommentDelete);
+            javalinConfig.routes.post("/api/v2/comments/{comment}/vote", contentHandler::handleCommentVote);
+            javalinConfig.routes.delete("/api/v2/comments/{comment}/vote", contentHandler::handleCommentVote);
+            javalinConfig.routes.get("/api/v2/news", contentHandler::handleNewsList);
+            javalinConfig.routes.put("/api/v2/news", contentHandler::handleNewsPut);
+            javalinConfig.routes.get("/api/v2/news/{news}", contentHandler::handleNewsGet);
+            javalinConfig.routes.get("/api/v2/changelog", contentHandler::handleChangelogList);
+            javalinConfig.routes.put("/api/v2/changelog", contentHandler::handleChangelogPut);
+            javalinConfig.routes.get("/api/v2/changelog/{stream}/{version}", contentHandler::handleChangelogBuild);
+            javalinConfig.routes.put("/api/v2/wiki", contentHandler::handleWikiPut);
+            javalinConfig.routes.get("/api/v2/wiki/{locale}/<path>", contentHandler::handleWikiGet);
             javalinConfig.routes.get("/api/v2/seasonal-backgrounds", miscHandler);
             javalinConfig.routes.get("/api/v1/banner/{file}", miscHandler);
             javalinConfig.routes.get("/a/{id}", miscHandler);
