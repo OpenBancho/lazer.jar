@@ -35,6 +35,53 @@ public class MultiplayerManager {
     // Active score tokens for multiplayer/playlist rooms: tokenId -> RoomScoreToken
     private final Map<Long, RoomScoreToken> scoreTokens = new ConcurrentHashMap<>();
 
+    /** Told whenever a score lands in a playlist room (the metadata hub passes it on to the clients watching the room). */
+    public interface ScoreSetListener {
+        void onScoreSet(long roomId, long playlistItemId, long scoreId, int userId, long totalScore, Integer newRank);
+    }
+
+    /** What a client shows of a playlist item: how the scores spread over 100,000-point bins, and their sum. */
+    public record ItemStats(long playlistItemId, long[] totalScoreDistribution, long cumulativeScore, long lastProcessedScoreId) {}
+
+    public static final int SCORE_DISTRIBUTION_BINS = 13;
+
+    private volatile ScoreSetListener scoreSetListener;
+
+    public void setScoreSetListener(ScoreSetListener listener) {
+        this.scoreSetListener = listener;
+    }
+
+    /** Stats of every playlist item of a room, in the shape the client's daily challenge screen asks for. */
+    public List<ItemStats> getRoomItemStats(long roomId) {
+        Room room = rooms.get(roomId);
+        List<ItemStats> out = new ArrayList<>();
+
+        if (room == null) return out;
+
+        for (PlaylistItem item : room.playlist) {
+            long[] bins = new long[SCORE_DISTRIBUTION_BINS];
+            long cumulative = 0;
+            long lastId = 0;
+
+            for (Map<String, Object> sc : getPlaylistScores(roomId, item.id)) {
+                long total = (sc.get("total_score") instanceof Number n) ? n.longValue() : 0;
+                boolean passed = !(sc.get("passed") instanceof Boolean b) || b;
+
+                if (!passed) continue;
+
+                // the last bin takes everything from 1,200,000 up
+                bins[(int) Math.max(0, Math.min(SCORE_DISTRIBUTION_BINS - 1, total / 100_000L))]++;
+                cumulative += total;
+
+                if (sc.get("id") instanceof Number id) lastId = Math.max(lastId, id.longValue());
+            }
+
+            out.add(new ItemStats(item.id, bins, cumulative, lastId));
+        }
+
+        return out;
+    }
+
     public MultiplayerManager(DatabaseManager databaseManager) {
         this.databaseManager = databaseManager;
     }
@@ -497,6 +544,29 @@ public class MultiplayerManager {
                 "total_score", totalScore,
                 "accuracy", accuracy
         ));
+
+        ScoreSetListener listener = scoreSetListener;
+
+        if (listener != null) {
+            // The rank is only reported when this score is the player's best on the item; otherwise it is null
+            Integer newRank = null;
+            List<Map<String, Object>> ranked = getPlaylistScores(roomId, playlistItemId);
+
+            for (int i = 0; i < ranked.size(); i++) {
+                if (ranked.get(i) == scoreMap) {
+                    newRank = i + 1;
+                    break;
+                }
+            }
+
+            long scoreId = (scoreMap.get("id") instanceof Number n) ? n.longValue() : 0;
+
+            try {
+                listener.onScoreSet(roomId, playlistItemId, scoreId, userId, totalScore, newRank);
+            } catch (Exception e) {
+                logger.debug("Score listener failed: {}", e.getMessage());
+            }
+        }
     }
 
     public List<Map<String, Object>> getPlaylistScores(long roomId, long playlistItemId) {
