@@ -18,7 +18,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.*;
 
 /**
- * Platform content: news (/news), changelog (/changelog), wiki (/wiki/{locale}/{path}) and comments (/comments).
+ * Platform content (comments live in lazer_comments: bancho.jar's own `comments` table is the stable in-game one): news (/news), changelog (/changelog), wiki (/wiki/{locale}/{path}) and comments (/comments).
  * Reading is public; writing news/changelog/wiki is staff-only, comments need a logged-in user.
  */
 public class ContentHandler {
@@ -49,12 +49,12 @@ public class ContentHandler {
                 "CREATE TABLE IF NOT EXISTS wiki_pages (locale VARCHAR(8) NOT NULL, path VARCHAR(190) NOT NULL, title VARCHAR(255) NOT NULL, "
                         + "markdown MEDIUMTEXT NOT NULL, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, "
                         + "PRIMARY KEY (locale, path)) DEFAULT CHARSET=utf8mb4",
-                "CREATE TABLE IF NOT EXISTS comments (id BIGINT AUTO_INCREMENT PRIMARY KEY, parent_id BIGINT NULL, user_id INT NOT NULL, "
+                "CREATE TABLE IF NOT EXISTS lazer_comments (id BIGINT AUTO_INCREMENT PRIMARY KEY, parent_id BIGINT NULL, user_id INT NOT NULL, "
                         + "commentable_type VARCHAR(32) NOT NULL, commentable_id BIGINT NOT NULL, message TEXT NOT NULL, "
                         + "pinned TINYINT(1) NOT NULL DEFAULT 0, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, "
                         + "edited_at TIMESTAMP NULL, deleted_at TIMESTAMP NULL, INDEX idx_comment_target (commentable_type, commentable_id), "
                         + "INDEX idx_comment_parent (parent_id)) DEFAULT CHARSET=utf8mb4",
-                "CREATE TABLE IF NOT EXISTS comment_votes (comment_id BIGINT NOT NULL, user_id INT NOT NULL, "
+                "CREATE TABLE IF NOT EXISTS lazer_comment_votes (comment_id BIGINT NOT NULL, user_id INT NOT NULL, "
                         + "PRIMARY KEY (comment_id, user_id)) DEFAULT CHARSET=utf8mb4"
         };
         try (Connection conn = db.getConnection(); Statement st = conn.createStatement()) {
@@ -368,8 +368,8 @@ public class ContentHandler {
         return s == null ? "" : s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>");
     }
 
-    private static final String COMMENT_SELECT = "SELECT c.*, (SELECT COUNT(*) FROM comments r WHERE r.parent_id = c.id AND r.deleted_at IS NULL) AS replies_count, "
-            + "(SELECT COUNT(*) FROM comment_votes v WHERE v.comment_id = c.id) AS votes_count FROM comments c ";
+    private static final String COMMENT_SELECT = "SELECT c.*, (SELECT COUNT(*) FROM lazer_comments r WHERE r.parent_id = c.id AND r.deleted_at IS NULL) AS replies_count, "
+            + "(SELECT COUNT(*) FROM lazer_comment_votes v WHERE v.comment_id = c.id) AS votes_count FROM lazer_comments c ";
 
     private Map<String, Object> bundle(Connection conn, String where, List<Object> args, int viewerId, int limit, String sort) throws SQLException {
         String order = switch (sort == null ? "new" : sort) {
@@ -400,7 +400,7 @@ public class ContentHandler {
         List<Long> votes = new ArrayList<>();
         if (viewerId > 0 && !ids.isEmpty()) {
             String in = String.join(",", Collections.nCopies(ids.size(), "?"));
-            try (PreparedStatement st = conn.prepareStatement("SELECT comment_id FROM comment_votes WHERE user_id = ? AND comment_id IN (" + in + ")")) {
+            try (PreparedStatement st = conn.prepareStatement("SELECT comment_id FROM lazer_comment_votes WHERE user_id = ? AND comment_id IN (" + in + ")")) {
                 st.setInt(1, viewerId);
                 for (int i = 0; i < ids.size(); i++) st.setLong(i + 2, ids.get(i));
                 try (ResultSet rs = st.executeQuery()) {
@@ -499,7 +499,7 @@ public class ContentHandler {
         try (Connection conn = db.getConnection()) {
             long newId;
             try (PreparedStatement st = conn.prepareStatement(
-                    "INSERT INTO comments (parent_id, user_id, commentable_type, commentable_id, message) VALUES (?,?,?,?,?)",
+                    "INSERT INTO lazer_comments (parent_id, user_id, commentable_type, commentable_id, message) VALUES (?,?,?,?,?)",
                     Statement.RETURN_GENERATED_KEYS)) {
                 if (parentStr != null && parentStr.matches("\\d+")) st.setLong(1, Long.parseLong(parentStr)); else st.setNull(1, Types.BIGINT);
                 st.setInt(2, user.id);
@@ -543,7 +543,7 @@ public class ContentHandler {
     }
 
     private boolean ownsOrStaff(Connection conn, User user, long commentId) throws SQLException {
-        try (PreparedStatement st = conn.prepareStatement("SELECT user_id FROM comments WHERE id = ? AND deleted_at IS NULL")) {
+        try (PreparedStatement st = conn.prepareStatement("SELECT user_id FROM lazer_comments WHERE id = ? AND deleted_at IS NULL")) {
             st.setLong(1, commentId);
             try (ResultSet rs = st.executeQuery()) {
                 return rs.next() && (rs.getInt(1) == user.id || (user.privileges & STAFF_MASK) != 0);
@@ -567,7 +567,7 @@ public class ContentHandler {
                 ctx.status(404).json(Map.of("error", "Comment not found"));
                 return;
             }
-            try (PreparedStatement st = conn.prepareStatement("UPDATE comments SET message = ?, edited_at = NOW() WHERE id = ?")) {
+            try (PreparedStatement st = conn.prepareStatement("UPDATE lazer_comments SET message = ?, edited_at = NOW() WHERE id = ?")) {
                 st.setString(1, message.trim());
                 st.setLong(2, id);
                 st.executeUpdate();
@@ -588,7 +588,7 @@ public class ContentHandler {
                 ctx.status(404).json(Map.of("error", "Comment not found"));
                 return;
             }
-            try (PreparedStatement st = conn.prepareStatement("UPDATE comments SET deleted_at = NOW() WHERE id = ?")) {
+            try (PreparedStatement st = conn.prepareStatement("UPDATE lazer_comments SET deleted_at = NOW() WHERE id = ?")) {
                 st.setLong(1, id);
                 st.executeUpdate();
             }
@@ -606,8 +606,8 @@ public class ContentHandler {
         boolean add = "POST".equalsIgnoreCase(ctx.method().name());
         try (Connection conn = db.getConnection()) {
             try (PreparedStatement st = conn.prepareStatement(add
-                    ? "INSERT IGNORE INTO comment_votes (comment_id, user_id) SELECT id, ? FROM comments WHERE id = ? AND deleted_at IS NULL"
-                    : "DELETE FROM comment_votes WHERE user_id = ? AND comment_id = ?")) {
+                    ? "INSERT IGNORE INTO lazer_comment_votes (comment_id, user_id) SELECT id, ? FROM lazer_comments WHERE id = ? AND deleted_at IS NULL"
+                    : "DELETE FROM lazer_comment_votes WHERE user_id = ? AND comment_id = ?")) {
                 st.setInt(1, user.id);
                 st.setLong(2, id);
                 st.executeUpdate();

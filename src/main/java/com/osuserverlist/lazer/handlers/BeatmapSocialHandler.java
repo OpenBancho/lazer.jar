@@ -41,9 +41,9 @@ public class BeatmapSocialHandler {
 
     private void createTables() {
         String[] ddl = {
-                "CREATE TABLE IF NOT EXISTS beatmapset_favourites (user_id INT NOT NULL, beatmapset_id INT NOT NULL, "
-                        + "created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (user_id, beatmapset_id), "
-                        + "INDEX idx_fav_set (beatmapset_id)) DEFAULT CHARSET=utf8mb4",
+                // `favourites` is bancho.jar's table (same schema), so stable and lazer share one favourites list
+                "CREATE TABLE IF NOT EXISTS favourites (userid INT NOT NULL, setid INT NOT NULL, created_at INT NOT NULL DEFAULT 0, "
+                        + "PRIMARY KEY (userid, setid)) DEFAULT CHARSET=utf8mb4",
                 "CREATE TABLE IF NOT EXISTS beatmapset_ratings (user_id INT NOT NULL, beatmapset_id INT NOT NULL, "
                         + "rating TINYINT NOT NULL, PRIMARY KEY (user_id, beatmapset_id), "
                         + "INDEX idx_rating_set (beatmapset_id)) DEFAULT CHARSET=utf8mb4",
@@ -114,8 +114,8 @@ public class BeatmapSocialHandler {
             return;
         }
         String sql = "favourite".equals(action)
-                ? "INSERT IGNORE INTO beatmapset_favourites (user_id, beatmapset_id) VALUES (?, ?)"
-                : "DELETE FROM beatmapset_favourites WHERE user_id = ? AND beatmapset_id = ?";
+                ? "INSERT IGNORE INTO favourites (userid, setid, created_at) VALUES (?, ?, UNIX_TIMESTAMP())"
+                : "DELETE FROM favourites WHERE userid = ? AND setid = ?";
         try (Connection conn = db.getConnection(); PreparedStatement st = conn.prepareStatement(sql)) {
             st.setInt(1, user.id);
             st.setInt(2, setId);
@@ -140,7 +140,7 @@ public class BeatmapSocialHandler {
     public List<Integer> favouriteSetIds(int userId, int offset, int limit) {
         List<Integer> ids = new ArrayList<>();
         try (Connection conn = db.getConnection();
-             PreparedStatement st = conn.prepareStatement("SELECT beatmapset_id FROM beatmapset_favourites WHERE user_id = ? "
+             PreparedStatement st = conn.prepareStatement("SELECT setid FROM favourites WHERE userid = ? "
                      + "ORDER BY created_at DESC LIMIT ? OFFSET ?")) {
             st.setInt(1, userId);
             st.setInt(2, limit);
