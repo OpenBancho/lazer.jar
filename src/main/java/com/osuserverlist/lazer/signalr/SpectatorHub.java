@@ -156,6 +156,7 @@ public class SpectatorHub {
             if (session.userId > 0 && activeUserStates.containsKey(session.userId)) {
                 Value existingState = activeUserStates.remove(session.userId);
                 activeUserFrameBundles.remove(session.userId);
+                com.osuserverlist.lazer.replay.ReplayStore.end(session.userId);
                 Value quitState = createModifiedSpectatorState(existingState, 4); // 4 = Quit
                 broadcastUserFinishedPlaying(session.userId, quitState);
             }
@@ -326,6 +327,9 @@ public class SpectatorHub {
         if (session.userId > 0 && stateVal != null) {
             activeUserStates.put(session.userId, stateVal);
             activeUserFrameBundles.put(session.userId, Collections.synchronizedList(new ArrayList<>()));
+            Long replayToken = (scoreTokenVal != null && scoreTokenVal.isIntegerValue())
+                    ? scoreTokenVal.asIntegerValue().toLong() : null;
+            com.osuserverlist.lazer.replay.ReplayStore.begin(session.userId, replayToken);
             logger.info("User {} began playing in SpectatorHub", session.userId);
 
             // Broadcast UserBeganPlaying to all watchers
@@ -354,6 +358,7 @@ public class SpectatorHub {
         }
 
         if (session.userId > 0 && bundleVal != null) {
+            com.osuserverlist.lazer.replay.ReplayStore.addFrames(session.userId, bundleVal);
             List<Value> frames = activeUserFrameBundles.get(session.userId);
             if (frames != null) {
                 if (frames.size() < 10000) {
@@ -400,6 +405,7 @@ public class SpectatorHub {
             }
             activeUserStates.remove(session.userId);
             activeUserFrameBundles.remove(session.userId);
+            com.osuserverlist.lazer.replay.ReplayStore.end(session.userId);
             logger.info("User {} finished playing in SpectatorHub", session.userId);
         }
 

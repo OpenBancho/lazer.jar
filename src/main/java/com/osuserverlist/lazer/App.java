@@ -58,6 +58,7 @@ public class App {
         AnticheatFlagHandler anticheatFlagHandler = new AnticheatFlagHandler(config, databaseManager);
         AnticheatVouchHandler anticheatVouchHandler = new AnticheatVouchHandler(authService, databaseManager, new com.osuserverlist.lazer.anticheat.AnticheatVouchClient(config));
         SoloScoreHandler soloScoreHandler = new SoloScoreHandler(authService, databaseManager, config, spectatorHub, anticheatFlagHandler.signatureTracker());
+        ScoreHandler scoreHandler = new ScoreHandler(authService, databaseManager, config);
         BeatmapHandler beatmapHandler = new BeatmapHandler(databaseManager, config);
         RankingsHandler rankingsHandler = new RankingsHandler(databaseManager, config);
         SearchHandler searchHandler = new SearchHandler(databaseManager, onlineManager, config);
@@ -163,6 +164,12 @@ public class App {
             javalinConfig.routes.put("/api/v2/beatmaps/{beatmap_id}/solo/scores/{token}", soloScoreHandler::handleSubmitScore);
             javalinConfig.routes.post("/api/v2/beatmaps/{beatmap_id}/solo/scores/{token}", soloScoreHandler::handleSubmitScore);
             javalinConfig.routes.get("/api/v2/beatmaps/{beatmap_id}/scores", soloScoreHandler::handleGetBeatmapScores);
+            javalinConfig.routes.get("/api/v2/beatmaps/{beatmap_id}/scores/users/{user_id}", scoreHandler::handleUserBeatmapScore);
+            javalinConfig.routes.get("/api/v2/beatmaps/{beatmap_id}/scores/users/{user_id}/all", scoreHandler::handleUserBeatmapScoresAll);
+            // Score lookup & replay download (the download route must be registered before /scores/{ruleset}/{score})
+            javalinConfig.routes.get("/api/v2/scores/{score_id}/download", scoreHandler::handleDownloadReplay);
+            javalinConfig.routes.get("/api/v2/scores/{score}", scoreHandler::handleGetScore);
+            javalinConfig.routes.get("/api/v2/scores/{ruleset}/{score}", scoreHandler::handleGetScore);
             javalinConfig.routes.get("/api/v2/beatmapsets/{beatmapset_id}", beatmapHandler::handleGetBeatmapset);
             javalinConfig.routes.get("/api/v2/beatmapsets/lookup", beatmapHandler::handleLookupBeatmapset);
             javalinConfig.routes.get("/api/v2/beatmaps", beatmapHandler::handleGetBeatmaps);

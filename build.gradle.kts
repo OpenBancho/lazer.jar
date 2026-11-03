@@ -49,6 +49,7 @@ dependencies {
 
     implementation("redis.clients:jedis:$jedisVersion")
     implementation("io.github.7mochi:osu-native-jar:0.0.9")
+    implementation("org.tukaani:xz:1.10")
     implementation("org.msgpack:msgpack-core:0.9.8")
     implementation("org.msgpack:jackson-dataformat-msgpack:0.9.8")
 }

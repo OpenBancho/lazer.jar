@@ -1591,6 +1591,76 @@ public class DatabaseManager {
         }
     }
 
+    private static final String SCORE_SELECT = """
+            SELECT s.*,
+                   COALESCE(u.name, '') AS user_name, COALESCE(u.country, 'XX') AS user_country,
+                   COALESCE(m.id, 0) AS map_id, COALESCE(m.set_id, 0) AS set_id,
+                   COALESCE(m.status, 0) AS map_status,
+                   COALESCE(m.artist, '') AS artist, COALESCE(m.title, '') AS title,
+                   COALESCE(m.version, '') AS version, COALESCE(m.creator, '') AS creator,
+                   COALESCE(m.diff, 0.0) AS diff, COALESCE(m.bpm, 0.0) AS bpm,
+                   COALESCE(m.cs, 0.0) AS cs, COALESCE(m.ar, 0.0) AS ar,
+                   COALESCE(m.od, 0.0) AS od, COALESCE(m.hp, 0.0) AS hp,
+                   COALESCE(m.total_length, 0) AS total_length, COALESCE(m.max_combo, 0) AS map_max_combo
+            FROM scores s
+            LEFT JOIN users u ON u.id = s.userid
+            LEFT JOIN maps m ON m.md5 = s.map_md5
+            """;
+
+    /** A single score by id (any status except hidden), with user and beatmap data joined. */
+    public ScoreRecord findScoreById(long scoreId) {
+        String sql = SCORE_SELECT + " WHERE s.id = ? AND s.status != -1 LIMIT 1";
+        try (Connection conn = getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setLong(1, scoreId);
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (rs.next()) {
+                    return mapScoreRecord(rs);
+                }
+            }
+        } catch (SQLException e) {
+            logger.error("Error finding score {}: {}", scoreId, e.getMessage());
+        }
+        return null;
+    }
+
+    /** Every non-failed visible score of a user on one beatmap, best first. */
+    public List<ScoreRecord> findUserBeatmapScores(int beatmapId, int userId, int mode) {
+        BeatmapRecord beatmap = findBeatmapById(beatmapId);
+        if (beatmap == null || beatmap.md5 == null || beatmap.md5.isBlank()) {
+            return Collections.emptyList();
+        }
+        String sql = SCORE_SELECT + " WHERE s.userid = ? AND s.map_md5 = ? AND s.mode = ? AND s.status != -1"
+                + " AND s.grade != 'F' ORDER BY s.pp DESC, s.score DESC LIMIT 100";
+        List<ScoreRecord> list = new ArrayList<>();
+        try (Connection conn = getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setInt(1, userId);
+            stmt.setString(2, beatmap.md5);
+            stmt.setInt(3, mode);
+            try (ResultSet rs = stmt.executeQuery()) {
+                while (rs.next()) {
+                    list.add(mapScoreRecord(rs));
+                }
+            }
+        } catch (SQLException e) {
+            logger.error("Error finding scores of user {} on map {}: {}", userId, beatmapId, e.getMessage());
+        }
+        return list;
+    }
+
+    /** Counts a replay view for the score owner (shown as "replays watched by others"). */
+    public void incrementReplayViews(int ownerUserId, int mode) {
+        try (Connection conn = getConnection();
+             PreparedStatement stmt = conn.prepareStatement("UPDATE stats SET replay_views = replay_views + 1 WHERE id = ? AND mode = ?")) {
+            stmt.setInt(1, ownerUserId);
+            stmt.setInt(2, mode);
+            stmt.executeUpdate();
+        } catch (SQLException e) {
+            logger.warn("Could not increment replay views for user {}: {}", ownerUserId, e.getMessage());
+        }
+    }
+
     /**
      * Removes a score from the leaderboards (status -1). If it was the player's best on the map, the best remaining score
      * takes its place, and the player's weighted pp is recalculated.
