@@ -30,7 +30,7 @@ import java.util.concurrent.TimeUnit;
 /**
  * Daily challenge: staff schedule one beatmap per UTC day (table {@code daily_challenges}); a playlist room of
  * category {@code daily_challenge} is created for it, valid until two minutes before midnight UTC.
- * Mirrors g0v0-server's daily challenge room (the room is what the lazer client shows in its daily challenge panel).
+ * The room is what the lazer client shows in its daily challenge panel.
  */
 public class DailyChallengeService {
     private static final Logger logger = LoggerFactory.getLogger(DailyChallengeService.class);
