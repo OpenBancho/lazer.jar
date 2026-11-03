@@ -16,4 +16,10 @@ public class User {
     public String customBadgeName;
     public String customBadgeIcon;
     public String customBanner;
+    /** Path of the page background a supporter uploaded on the website, e.g. /api/v1/background/1.jpg. */
+    public String customBackground;
+    /** Accent colour of the profile as #rrggbb. */
+    public String profileColor;
+    /** Colour of the profile's panels as #rrggbb. */
+    public String profileColorSecondary;
 }

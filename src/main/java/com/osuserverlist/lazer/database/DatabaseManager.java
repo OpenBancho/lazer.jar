@@ -434,6 +434,14 @@ public class DatabaseManager {
         try {
             user.customBanner = rs.getString("custom_banner");
         } catch (SQLException ignored) {}
+        // Newer columns: an older database simply does not have them yet.
+        try {
+            user.customBackground = rs.getString("custom_background");
+        } catch (SQLException ignored) {}
+        try {
+            user.profileColor = rs.getString("profile_color");
+            user.profileColorSecondary = rs.getString("profile_color_secondary");
+        } catch (SQLException ignored) {}
         return user;
     }
 

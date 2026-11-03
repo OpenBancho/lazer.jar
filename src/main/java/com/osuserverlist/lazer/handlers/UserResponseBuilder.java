@@ -50,6 +50,13 @@ public class UserResponseBuilder {
         cover.put("id", null);
         root.put("cover", cover);
         root.put("cover_url", coverUrl);
+        // The page background and colour scheme a supporter chose on the website. The client draws the
+        // picture behind the profile and derives the overlay's hue from the primary colour.
+        root.put("custom_background_url", getBackgroundUrl(user.customBackground, config));
+        String primaryColour = validColour(user.profileColor);
+        root.put("profile_colour", primaryColour);
+        root.put("profile_colour_secondary", validColour(user.profileColorSecondary));
+        root.put("profile_hue", primaryColour == null ? null : hueOf(primaryColour));
 
         boolean isSupporter = user.donorEnd > (System.currentTimeMillis() / 1000);
         boolean isAdmin = (user.privileges & 32) != 0;
@@ -62,7 +69,6 @@ public class UserResponseBuilder {
         root.put("support_level", isSupporter ? 1 : 0);
         root.put("is_admin", isAdmin);
         root.put("pm_friends_only", false);
-        root.put("profile_colour", null);
 
         long creationSec = user.creationTime > 0 ? user.creationTime : (System.currentTimeMillis() / 1000);
         String joinDate = ISO_FORMATTER.format(Instant.ofEpochSecond(creationSec));
@@ -469,6 +475,50 @@ public class UserResponseBuilder {
         return isLocal
                 ? String.format("http://%s/a/%d", config.domain, userId)
                 : String.format("https://a.%s/%d", config.domain, userId);
+    }
+
+    /** Absolute url of an uploaded profile background, or null when the player has none. */
+    public static String getBackgroundUrl(String customBackground, ServerConfig config) {
+        if (customBackground == null || customBackground.isBlank()) {
+            return null;
+        }
+
+        String path = customBackground.trim();
+        if (!path.matches("/api/v1/background/[0-9]{1,10}\\.jpg")) {
+            return null;
+        }
+
+        boolean isLocal = config.domain.startsWith("localhost") || config.domain.startsWith("127.0.0.1");
+        return (isLocal ? "http://" : "https://") + config.domain + path;
+    }
+
+    /** The colour if it is a strict #rrggbb value, otherwise null. */
+    static String validColour(String colour) {
+        return colour != null && colour.matches("#[0-9a-fA-F]{6}") ? colour.toLowerCase() : null;
+    }
+
+    /** Hue of a #rrggbb colour in degrees (0-359), which is what the client's profile_hue means. */
+    static int hueOf(String colour) {
+        double r = Integer.parseInt(colour.substring(1, 3), 16) / 255.0;
+        double g = Integer.parseInt(colour.substring(3, 5), 16) / 255.0;
+        double b = Integer.parseInt(colour.substring(5, 7), 16) / 255.0;
+        double max = Math.max(r, Math.max(g, b));
+        double d = max - Math.min(r, Math.min(g, b));
+
+        if (d == 0) {
+            return 0;
+        }
+
+        double h;
+        if (max == r) {
+            h = ((g - b) / d + 6) % 6;
+        } else if (max == g) {
+            h = (b - r) / d + 2;
+        } else {
+            h = (r - g) / d + 4;
+        }
+
+        return (int) Math.round(h * 60) % 360;
     }
 
     public static String getCoverUrl(String customBanner, ServerConfig config) {
