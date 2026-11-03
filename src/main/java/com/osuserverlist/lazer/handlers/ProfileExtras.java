@@ -17,7 +17,8 @@ import java.time.LocalDate;
 import java.util.*;
 
 /**
- * Fills the parts of a full profile response that need extra data: the about-me page, beatmap counters,
+ * Fills the parts of a full profile response that need extra data: the about-me page (users.userpage_content, shared
+ * with the website settings), beatmap counters,
  * monthly play counts and the rank history graph. Also serves PUT /users/{id}/page.
  *
  * The rank history lives in bancho.jar's {@code rank_history} table (shared database): bancho.jar snapshots it on a
@@ -26,7 +27,7 @@ import java.util.*;
 public class ProfileExtras {
     private static final Logger logger = LoggerFactory.getLogger(ProfileExtras.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
-    private static final int MAX_PAGE_LENGTH = 60000;
+    private static final int MAX_PAGE_LENGTH = 2048; // the size of users.userpage_content
 
     private static volatile ProfileExtras instance;
 
@@ -58,8 +59,6 @@ public class ProfileExtras {
 
     private void createTables() {
         String[] ddl = {
-                "CREATE TABLE IF NOT EXISTS user_pages (user_id INT NOT NULL PRIMARY KEY, raw MEDIUMTEXT NOT NULL, "
-                        + "updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) DEFAULT CHARSET=utf8mb4",
                 // Same table (and exact schema) bancho.jar's RankSnapshotTask maintains; shared database
                 "CREATE TABLE IF NOT EXISTS `rank_history` (`userid` int NOT NULL, `mode` tinyint NOT NULL, `date` date NOT NULL, "
                         + "`rank` int NOT NULL, `pp` int NOT NULL DEFAULT '0', PRIMARY KEY (`userid`, `mode`, `date`), "
@@ -85,8 +84,9 @@ public class ProfileExtras {
     private void doEnrich(Map<String, Object> root, User user, UserStatistics stats, int mode) throws SQLException {
         try (Connection conn = db.getConnection()) {
             // About-me page
+            // One userpage for the whole ecosystem: the users.userpage_content column that the website settings write
             String raw = null;
-            try (PreparedStatement st = conn.prepareStatement("SELECT raw FROM user_pages WHERE user_id = ?")) {
+            try (PreparedStatement st = conn.prepareStatement("SELECT userpage_content FROM users WHERE id = ?")) {
                 st.setInt(1, user.id);
                 try (ResultSet rs = st.executeQuery()) {
                     if (rs.next()) raw = rs.getString(1);
@@ -193,9 +193,9 @@ public class ProfileExtras {
             return;
         }
         try (Connection conn = db.getConnection();
-             PreparedStatement st = conn.prepareStatement("INSERT INTO user_pages (user_id, raw) VALUES (?, ?) ON DUPLICATE KEY UPDATE raw = VALUES(raw)")) {
-            st.setInt(1, me.id);
-            st.setString(2, raw);
+             PreparedStatement st = conn.prepareStatement("UPDATE users SET userpage_content = ? WHERE id = ?")) {
+            st.setString(1, raw.isEmpty() ? null : raw);
+            st.setInt(2, me.id);
             st.executeUpdate();
         } catch (SQLException e) {
             ctx.status(500).json(Map.of("error", "Database error"));
