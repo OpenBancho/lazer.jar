@@ -64,6 +64,7 @@ public class DailyChallengeService {
         this.multiplayerManager = multiplayerManager;
         this.authService = authService;
         createTable();
+        multiplayerManager.setScorePersister(this::persistScore);
     }
 
     public void setListener(java.util.function.Consumer<Long> listener) {
@@ -97,7 +98,81 @@ public class DailyChallengeService {
         }, 2, 300, TimeUnit.SECONDS);
     }
 
+    private void createScoreTable() {
+        // One row per score submitted to a daily challenge room, as the client was shown it. A room (and its in-memory leaderboard) is gone
+        // after a restart, or when the day's challenge is replaced; the day's scores are not.
+        String sql = "CREATE TABLE IF NOT EXISTS daily_challenge_scores (score_id BIGINT NOT NULL PRIMARY KEY, day DATE NOT NULL, "
+                + "beatmap_id INT NOT NULL, user_id INT NOT NULL, total_score BIGINT NOT NULL, body MEDIUMTEXT NOT NULL, "
+                + "INDEX idx_daily_scores_day (day, beatmap_id)) DEFAULT CHARSET=utf8mb4";
+        try (Connection conn = db.getConnection(); Statement st = conn.createStatement()) {
+            st.executeUpdate(sql);
+        } catch (SQLException e) {
+            logger.warn("Could not create daily_challenge_scores table: {}", e.getMessage());
+        }
+    }
+
+    private void persistScore(Room room, long playlistItemId, Map<String, Object> scoreMap, int userId) {
+        long scoreId = scoreMap.get("id") instanceof Number n ? n.longValue() : 0;
+        int beatmapId = scoreMap.get("beatmap_id") instanceof Number n ? n.intValue() : 0;
+        long totalScore = scoreMap.get("total_score") instanceof Number n ? n.longValue() : 0;
+        LocalDate day = java.time.Instant.ofEpochMilli(room.startsAt).atZone(ZoneOffset.UTC).toLocalDate();
+
+        if (scoreId <= 0 || beatmapId <= 0) return;
+
+        try (Connection conn = db.getConnection();
+             PreparedStatement st = conn.prepareStatement("REPLACE INTO daily_challenge_scores (score_id, day, beatmap_id, user_id, total_score, body) VALUES (?,?,?,?,?,?)")) {
+            st.setLong(1, scoreId);
+            st.setDate(2, Date.valueOf(day));
+            st.setInt(3, beatmapId);
+            st.setInt(4, userId);
+            st.setLong(5, totalScore);
+            st.setString(6, MAPPER.writeValueAsString(scoreMap));
+            st.executeUpdate();
+        } catch (Exception e) {
+            logger.warn("Could not store daily challenge score {}: {}", scoreId, e.getMessage());
+        }
+    }
+
+    /** Puts the day's earlier scores on the beatmap of the challenge back into a freshly created room. */
+    @SuppressWarnings("unchecked")
+    private void restoreScores(Room room, LocalDate day, int beatmapId) {
+        if (room.playlist.isEmpty()) return;
+
+        long itemId = room.playlist.get(0).id;
+        int restored = 0;
+
+        try (Connection conn = db.getConnection();
+             PreparedStatement st = conn.prepareStatement("SELECT user_id, body FROM daily_challenge_scores WHERE day = ? AND beatmap_id = ? ORDER BY score_id")) {
+            st.setDate(1, Date.valueOf(day));
+            st.setInt(2, beatmapId);
+
+            try (ResultSet rs = st.executeQuery()) {
+                while (rs.next()) {
+                    Map<String, Object> score = MAPPER.readValue(rs.getString("body"), Map.class);
+
+                    // The room and its playlist item are new; the score is the same.
+                    score.put("room_id", room.roomId);
+                    score.put("playlist_item_id", itemId);
+
+                    multiplayerManager.restoreScore(room.roomId, itemId, score, rs.getInt("user_id"),
+                            score.get("total_score") instanceof Number n ? n.longValue() : 0,
+                            score.get("accuracy") instanceof Number n ? n.doubleValue() : 0,
+                            score.get("max_combo") instanceof Number n ? n.intValue() : 0,
+                            score.get("pp") instanceof Number n ? n.floatValue() : 0f);
+                    restored++;
+                }
+            }
+        } catch (Exception e) {
+            logger.warn("Could not restore the daily challenge scores of {}: {}", day, e.getMessage());
+        }
+
+        if (restored > 0) {
+            logger.info("Restored {} score(s) of {} into daily challenge room {}", restored, day, room.roomId);
+        }
+    }
+
     private void createTable() {
+        createScoreTable();
         String sql = "CREATE TABLE IF NOT EXISTS daily_challenges (day DATE NOT NULL PRIMARY KEY, beatmap_id INT NOT NULL, "
                 + "ruleset_id INT NOT NULL DEFAULT 0, required_mods TEXT NULL, allowed_mods TEXT NULL) DEFAULT CHARSET=utf8mb4";
         try (Connection conn = db.getConnection(); Statement st = conn.createStatement()) {
@@ -163,6 +238,7 @@ public class DailyChallengeService {
 
         // Host 0: the room belongs to the server, nobody is auto-joined. matchType 0 = playlist.
         Room room = multiplayerManager.createRoom(0, today.toString(), "", 0, 0, (int) minutes, null, List.of(item), "daily_challenge");
+        restoreScores(room, today, entry.beatmapId());
         roomDay = today;
         roomId = room.roomId;
         logger.info("Created daily challenge room {} for {} (beatmap {}, ruleset {})", room.roomId, today, entry.beatmapId(), entry.rulesetId());
