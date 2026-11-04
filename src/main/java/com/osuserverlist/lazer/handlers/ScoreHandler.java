@@ -90,7 +90,8 @@ public class ScoreHandler {
         String encoded = java.net.URLEncoder.encode(name, java.nio.charset.StandardCharsets.UTF_8).replace("+", "%20");
         ctx.header("Content-Type", "application/x-osu-replay");
         ctx.header("Content-Disposition", "attachment; filename=\"" + ascii + "\"; filename*=UTF-8''" + encoded);
-        ctx.result(Files.readAllBytes(file));
+        // a replay stored by bancho.jar is the bare frame stream; the client needs a complete .osr
+        ctx.result(ReplayStore.forDownload(sc, Files.readAllBytes(file)));
     }
 
     private int modeParam(Context ctx, int def) {
