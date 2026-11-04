@@ -126,6 +126,7 @@ public class MetadataHub {
             }
             if (!stillConnected) {
                 userActivities.remove(session.userId);
+                onlineManager.markUserOffline(session.userId);
                 broadcastUserPresence(session.userId, 0); // 0 = Offline
             }
             logger.info("User {} disconnected from MetadataHub [{}]", session.userId, ctx.sessionId());

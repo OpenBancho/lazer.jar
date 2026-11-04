@@ -95,7 +95,13 @@ public class OAuthHandler implements Handler {
                 return;
             }
 
-            TokenStore.TokenPair pair = authService.authenticatePassword(username, password, scope);
+            TokenStore.TokenPair pair;
+            try {
+                pair = authService.authenticatePassword(username, password, scope);
+            } catch (AuthService.AccountInUseException e) {
+                sendError(ctx, 403, "account_in_use", e.getMessage());
+                return;
+            }
             if (pair == null) {
                 sendError(ctx, 401, "invalid_grant", "Invalid username or password.");
                 return;
@@ -118,7 +124,13 @@ public class OAuthHandler implements Handler {
                 return;
             }
 
-            TokenStore.TokenPair pair = authService.authenticateRefresh(refreshToken);
+            TokenStore.TokenPair pair;
+            try {
+                pair = authService.authenticateRefresh(refreshToken);
+            } catch (AuthService.AccountInUseException e) {
+                sendError(ctx, 403, "account_in_use", e.getMessage());
+                return;
+            }
             if (pair == null) {
                 sendError(ctx, 401, "invalid_grant", "Invalid or expired refresh token.");
                 return;

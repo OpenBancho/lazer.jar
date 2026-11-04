@@ -48,6 +48,21 @@ public class OnlineManager {
         }
     }
 
+    /** The account's last lazer connection closed: drop it right away so stable can take the account. */
+    public void markUserOffline(int userId) {
+        if (userId <= 0) return;
+        localLazerUsers.remove(userId);
+
+        JedisPool pool = tokenStore.getJedisPool();
+        if (pool != null) {
+            try (Jedis jedis = pool.getResource()) {
+                jedis.zrem("bjar:online:lazer", String.valueOf(userId));
+            } catch (Exception e) {
+                logger.debug("Failed to clear active user in Redis: {}", e.getMessage());
+            }
+        }
+    }
+
     public Set<Integer> getCombinedOnlineUserIds() {
         long now = System.currentTimeMillis();
         long cutoff = now - 120_000; // 2 minutes window

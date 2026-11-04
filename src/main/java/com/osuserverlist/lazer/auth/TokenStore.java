@@ -72,6 +72,35 @@ public class TokenStore {
         return jedisPool;
     }
 
+    /** Whether bancho.jar currently has a game-client session for this account. Redis being down counts as no. */
+    public boolean isBanchoOnline(int userId) {
+        if (jedisPool == null) return false;
+
+        try (Jedis jedis = jedisPool.getResource()) {
+            return jedis.sismember("bjar:online:bancho", String.valueOf(userId));
+        } catch (Exception e) {
+            logger.debug("Could not check bancho presence of {}: {}", userId, e.getMessage());
+            return false;
+        }
+    }
+
+    /** The account a refresh token belongs to, without consuming it; -1 when unknown. */
+    public int peekRefreshUserId(String refreshToken) {
+        if (refreshToken == null || refreshToken.isBlank()) return -1;
+
+        if (jedisPool != null) {
+            try (Jedis jedis = jedisPool.getResource()) {
+                String id = jedis.hget("bjar:oauth:refresh:" + refreshToken, "userId");
+                if (id != null) return Integer.parseInt(id);
+            } catch (Exception e) {
+                logger.debug("Redis refresh peek failed: {}", e.getMessage());
+            }
+        }
+
+        TokenData data = memoryRefreshTokens.get(refreshToken);
+        return data != null ? data.userId : -1;
+    }
+
     public TokenPair issue(int userId, String username, int privileges, String scope) {
         String accessToken = generateRandomString(32);
         String refreshToken = generateRandomString(32);
