@@ -23,6 +23,20 @@ public class AuthService {
         this.tokenStore = tokenStore;
     }
 
+    /** The account is already online in the stable client, which got in first. */
+    public static class AccountInUseException extends RuntimeException {
+        public AccountInUseException(String message) {
+            super(message);
+        }
+    }
+
+    private void requireNotInStable(int userId, String username) {
+        if (tokenStore.isBanchoOnline(userId)) {
+            logger.info("Login of '{}' refused: the account is online in the stable client", username);
+            throw new AccountInUseException("This account is already online in the osu! stable client. Close it and try again.");
+        }
+    }
+
     public TokenStore.TokenPair authenticatePassword(String username, String password, String scope) {
         if (username == null || username.isBlank() || password == null || password.isBlank()) {
             return null;
@@ -47,6 +61,8 @@ public class AuthService {
             return null;
         }
 
+        requireNotInStable(user.id, user.name);
+
         logger.info("User '{}' (id: {}) successfully authenticated", user.name, user.id);
 
         // Same rule as the stable client: the first successful in-game login is what verifies an account that was
@@ -66,6 +82,11 @@ public class AuthService {
         if (refreshToken == null || refreshToken.isBlank()) {
             return null;
         }
+        int userId = tokenStore.peekRefreshUserId(refreshToken.trim());
+        if (userId > 0) {
+            requireNotInStable(userId, "#" + userId);
+        }
+
         return tokenStore.refresh(refreshToken.trim());
     }
 
