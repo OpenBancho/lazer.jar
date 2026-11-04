@@ -174,7 +174,37 @@ public final class ReplayStore {
 
     // ---- .osr encoding ----
 
+    /**
+     * What a client gets when it downloads a replay. bancho.jar stores the stable client's upload as it is: the bare
+     * LZMA frame stream, with no header. The lazer client cannot import that, it needs a complete .osr, so the header
+     * is written here from the score row. A file that already is a complete .osr is returned untouched.
+     */
+    public static byte[] forDownload(com.osuserverlist.lazer.models.ScoreRecord sc, byte[] stored) throws IOException {
+        if (isCompleteOsr(stored)) {
+            return stored;
+        }
+
+        ScoreInfo info = new ScoreInfo(sc.id, sc.userId, sc.username, sc.mapMd5, sc.mode, sc.n300, sc.n100, sc.n50,
+                sc.ngeki, sc.nkatu, sc.nmiss, sc.score, sc.maxCombo, sc.perfect, sc.mods, sc.playTimeEpochSec * 1000L);
+        return buildOsrFromCompressed(info, stored);
+    }
+
+    /** A complete .osr starts with the game mode (0-3) and a four byte version; the bare stream with the LZMA 0x5D byte. */
+    static boolean isCompleteOsr(byte[] data) {
+        if (data == null || data.length < 12) {
+            return false;
+        }
+
+        int mode = data[0] & 0xFF;
+        int version = (data[1] & 0xFF) | (data[2] & 0xFF) << 8 | (data[3] & 0xFF) << 16 | (data[4] & 0xFF) << 24;
+        return mode <= 3 && version >= 1000 && version < 100_000_000;
+    }
+
     static byte[] buildOsr(ScoreInfo s, List<float[]> frames) throws IOException {
+        return buildOsrFromCompressed(s, compress(frameText(frames).getBytes(StandardCharsets.UTF_8)));
+    }
+
+    static byte[] buildOsrFromCompressed(ScoreInfo s, byte[] data) throws IOException {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         DataOutputStream out = new DataOutputStream(bytes);
 
@@ -196,7 +226,6 @@ public final class ReplayStore {
         writeString(out, ""); // life bar graph is not tracked
         writeLong(out, s.playedAtEpochMs() * 10_000L + TICKS_AT_UNIX_EPOCH);
 
-        byte[] data = compress(frameText(frames).getBytes(StandardCharsets.UTF_8));
         writeInt(out, data.length);
         out.write(data);
         writeLong(out, s.scoreId());
