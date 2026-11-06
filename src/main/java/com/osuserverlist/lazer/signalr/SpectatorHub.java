@@ -48,6 +48,9 @@ public class SpectatorHub {
 
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
 
+    /** The website's live spectator: gets every play session of the hub, see {@link WebSpectate}. */
+    public final WebSpectate web;
+
     public static class ClientSession {
         public final WsContext ws;
         public final int userId;
@@ -74,6 +77,7 @@ public class SpectatorHub {
         this.authService = authService;
         this.databaseManager = databaseManager;
         this.onlineManager = onlineManager;
+        this.web = new WebSpectate(databaseManager, userSessions::containsKey);
 
         // Periodic keep-alive ping every 5 seconds
         this.scheduler.scheduleAtFixedRate(this::broadcastPeriodicPing, 5, 5, TimeUnit.SECONDS);
@@ -126,7 +130,10 @@ public class SpectatorHub {
                 Set<ClientSession> uSet = userSessions.get(session.userId);
                 if (uSet != null) {
                     uSet.remove(session);
-                    if (uSet.isEmpty()) userSessions.remove(session.userId);
+                    if (uSet.isEmpty()) {
+                        userSessions.remove(session.userId);
+                        web.onOffline(session.userId);
+                    }
                 }
             }
 
@@ -157,8 +164,9 @@ public class SpectatorHub {
                 Value existingState = activeUserStates.remove(session.userId);
                 activeUserFrameBundles.remove(session.userId);
                 com.osuserverlist.lazer.replay.ReplayStore.end(session.userId);
-                Value quitState = createModifiedSpectatorState(existingState, 4); // 4 = Quit
+                Value quitState = createModifiedSpectatorState(existingState, 5); // 5 = Quit (4 is Failed)
                 broadcastUserFinishedPlaying(session.userId, quitState);
+                web.onEnd(session.userId, 5);
             }
 
             if (session.userId > 0) {
@@ -334,6 +342,7 @@ public class SpectatorHub {
 
             // Broadcast UserBeganPlaying to all watchers
             broadcastUserBeganPlaying(session.userId, stateVal);
+            web.onBegin(session.userId, stateVal);
         }
 
         if (invocationId != null) {
@@ -366,6 +375,7 @@ public class SpectatorHub {
                 }
             }
             broadcastUserSentFrames(session.userId, bundleVal);
+            web.onFrames(session.userId, bundleVal);
         }
 
         if (invocationId != null) {
@@ -406,6 +416,7 @@ public class SpectatorHub {
             activeUserStates.remove(session.userId);
             activeUserFrameBundles.remove(session.userId);
             com.osuserverlist.lazer.replay.ReplayStore.end(session.userId);
+            web.onEnd(session.userId, stateOf(finalStateValue));
             logger.info("User {} finished playing in SpectatorHub", session.userId);
         }
 
@@ -652,6 +663,17 @@ public class SpectatorHub {
             logger.debug("Error building hub message {}: {}", target, e.getMessage());
             return new byte[0];
         }
+    }
+
+    /** SpectatedUserState of a SpectatorState array; Passed when it cannot be read. */
+    private static int stateOf(Value state) {
+        if (state != null && state.isArrayValue() && state.asArrayValue().size() > 3) {
+            Value v = state.asArrayValue().get(3);
+            if (v.isIntegerValue()) {
+                return v.asIntegerValue().asInt();
+            }
+        }
+        return 3;
     }
 
     private Value createModifiedSpectatorState(Value existingState, int finalStateInt) {
