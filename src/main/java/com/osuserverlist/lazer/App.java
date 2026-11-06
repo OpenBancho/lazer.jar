@@ -324,6 +324,10 @@ public class App {
             javalinConfig.routes.post("/multiplayer/negotiate", multiplayerHub::handleNegotiate);
             javalinConfig.routes.ws("/metadata", metadataHub::configureWs);
             javalinConfig.routes.ws("/spectator", spectatorHub::configureWs);
+
+            // Live spectating from the website (koneko-web): status and server-sent frames, see WebSpectate
+            javalinConfig.routes.get("/api/v1/spectate/status", spectatorHub.web::handleStatus);
+            javalinConfig.routes.sse("/api/v1/spectate/stream", spectatorHub.web::stream);
             javalinConfig.routes.ws("/multiplayer", multiplayerHub::configureWs);
 
             // Notification / Chat WebSocket
