@@ -132,6 +132,11 @@ public class ChatHandler implements Handler {
             try { limit = Math.min(Math.max(Integer.parseInt(limitParam), 1), 100); } catch (NumberFormatException ignored) {}
         }
 
+        if (!canAccessChannel(resolveUserId(ctx), channelId)) {
+            ctx.status(200).json(Collections.emptyList());
+            return;
+        }
+
         List<Map<String, Object>> msgs = channelMessages.getOrDefault(channelId, Collections.emptyList());
         List<Map<String, Object>> result = new ArrayList<>();
         for (Map<String, Object> m : msgs) {
@@ -172,7 +177,28 @@ public class ChatHandler implements Handler {
         }
 
         if (content == null) content = "";
+        content = content.strip();
+        if (content.isEmpty()) {
+            ctx.status(422).json(Map.of("error", "Empty message"));
+            return;
+        }
+        if (content.length() > MAX_MESSAGE_LENGTH) {
+            content = content.substring(0, MAX_MESSAGE_LENGTH);
+        }
         if (uuid == null || uuid.isBlank()) uuid = UUID.randomUUID().toString();
+        if (uuid.length() > 64) uuid = uuid.substring(0, 64);
+
+        // Restricted or silenced accounts cannot talk.
+        if ((user.privileges & 1) == 0 || user.silenceEnd > System.currentTimeMillis() / 1000) {
+            ctx.status(403).json(Map.of("error", "You cannot send messages right now"));
+            return;
+        }
+
+        // Only public channels, or channels the user is a member of.
+        if (!canAccessChannel(user.id, channelId)) {
+            ctx.status(403).json(Map.of("error", "You are not in this channel"));
+            return;
+        }
 
         long messageId = nextMessageId.getAndIncrement();
         String timestamp = ISO_FORMATTER.format(Instant.now());
@@ -189,17 +215,18 @@ public class ChatHandler implements Handler {
         message.put("uuid", uuid);
         message.put("sender", senderObj);
 
-        channelMessages.computeIfAbsent(channelId, k -> new CopyOnWriteArrayList<>()).add(message);
+        List<Map<String, Object>> history = channelMessages.computeIfAbsent(channelId, k -> new CopyOnWriteArrayList<>());
+        history.add(message);
+        while (history.size() > MAX_HISTORY_PER_CHANNEL) {
+            history.remove(0);
+        }
         allMessages.add(message);
         if (allMessages.size() > 5000) {
             allMessages.remove(0);
         }
 
-        // Auto join channel for sender
-        userJoinedChannels.computeIfAbsent(user.id, k -> ConcurrentHashMap.newKeySet()).add(channelId);
-
         if (notificationHub != null) {
-            notificationHub.broadcastChatMessage(message);
+            notificationHub.broadcastChatMessage(message, uid -> canAccessChannel(uid, channelId));
         }
 
         logger.info("Chat message [{}] sent by user {} ({}) in channel {}: {}",
@@ -225,7 +252,7 @@ public class ChatHandler implements Handler {
             long mId = (msg.get("message_id") instanceof Number n) ? n.longValue() : 0;
             if (mId > since) {
                 int chId = (msg.get("channel_id") instanceof Number n) ? n.intValue() : 0;
-                if (chId == 1 || chId > 1000 || joined.contains(chId)) {
+                if (chId == 1 || joined.contains(chId)) {
                     newMsgs.add(msg);
                 }
             }
@@ -256,9 +283,15 @@ public class ChatHandler implements Handler {
     public void handleJoinChannel(@NotNull Context ctx) {
         int channelId = parseChannelId(ctx.pathParam("channel_id"));
         int userId = resolveUserId(ctx);
-        if (userId > 0) {
-            userJoinedChannels.computeIfAbsent(userId, k -> ConcurrentHashMap.newKeySet()).add(channelId);
+        if (userId <= 0) {
+            ctx.status(401).json(Map.of("error", "Unauthorized"));
+            return;
         }
+        if (channelId != 1 && channelId != 2) {
+            ctx.status(403).json(Map.of("error", "This channel cannot be joined"));
+            return;
+        }
+        userJoinedChannels.computeIfAbsent(userId, k -> ConcurrentHashMap.newKeySet()).add(channelId);
         Map<String, Object> ch = formatChannel(channelId, channelId > 1000 ? "#multiplayer" : "#osu", "Chat", channelId > 1000 ? "MULTIPLAYER" : "PUBLIC", true);
         if (notificationHub != null && userId > 0) {
             notificationHub.notifyChannelJoin(userId, ch);
@@ -326,6 +359,18 @@ public class ChatHandler implements Handler {
         senderObj.put("is_supporter", user.donorEnd > (System.currentTimeMillis() / 1000));
         senderObj.put("profile_colour", null);
         return senderObj;
+    }
+
+    private static final int MAX_MESSAGE_LENGTH = 1000;
+    private static final int MAX_HISTORY_PER_CHANNEL = 500;
+
+    /** #osu and #lobby are public; any other channel needs membership. */
+    private boolean canAccessChannel(int userId, int channelId) {
+        if (channelId == 1) return true;
+        if (userId <= 0) return false;
+        if (channelId == 2) return true;
+        Set<Integer> joined = userJoinedChannels.get(userId);
+        return joined != null && joined.contains(channelId);
     }
 
     private int resolveUserId(Context ctx) {

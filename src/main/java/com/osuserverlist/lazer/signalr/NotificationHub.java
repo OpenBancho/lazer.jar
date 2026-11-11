@@ -61,6 +61,10 @@ public class NotificationHub {
 
     private void onConnect(WsConnectContext ctx) {
         int userId = resolveUserId(ctx);
+        if (userId <= 0) {
+            ctx.closeSession(4401, "Unauthorized");
+            return;
+        }
         NotificationSession session = new NotificationSession(ctx, userId);
         sessions.put(ctx.sessionId(), session);
 
@@ -118,7 +122,7 @@ public class NotificationHub {
         }
     }
 
-    public void broadcastChatMessage(Map<String, Object> messageMap) {
+    public void broadcastChatMessage(Map<String, Object> messageMap, java.util.function.IntPredicate canReceive) {
         if (messageMap == null) return;
         List<Object> users = new ArrayList<>();
         if (messageMap.containsKey("sender") && messageMap.get("sender") != null) {
@@ -130,7 +134,7 @@ public class NotificationHub {
 
         Set<WsContext> seen = Collections.newSetFromMap(new IdentityHashMap<>());
         for (NotificationSession s : sessions.values()) {
-            if (s.listeningChat && s.ws != null && seen.add(s.ws)) {
+            if (s.listeningChat && s.userId > 0 && canReceive.test(s.userId) && s.ws != null && seen.add(s.ws)) {
                 sendEvent(s, "chat.message.new", data);
             }
         }
