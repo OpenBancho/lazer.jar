@@ -44,6 +44,10 @@ public class MiscHandler implements Handler {
 
         if (path.startsWith("/a/") || path.startsWith("/avatar/")) {
             String id = ctx.pathParam("id");
+            if (!id.matches("[0-9A-Za-z_-]{1,32}(\\.png)?")) {
+                ctx.status(404).result("No such avatar.");
+                return;
+            }
             String filename = id.endsWith(".png") ? id : (id + ".png");
             java.nio.file.Path file1 = java.nio.file.Path.of("data", "assets", "avatars", filename).toAbsolutePath().normalize();
             java.nio.file.Path file2 = java.nio.file.Path.of("..", "bancho.jar", "data", "assets", "avatars", filename).toAbsolutePath().normalize();
