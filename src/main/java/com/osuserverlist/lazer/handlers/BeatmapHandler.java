@@ -160,6 +160,10 @@ public class BeatmapHandler {
         String rawId = ctx.pathParam("id");
         boolean noVideo = rawId.endsWith("n") || rawId.endsWith("N");
         String setId = noVideo ? rawId.substring(0, rawId.length() - 1) : rawId;
+        if (!setId.matches("\\d{1,10}")) {
+            ctx.status(400).json(Map.of("error", "Invalid beatmapset id"));
+            return;
+        }
 
         String dlUrl = config.directDownload + "/" + setId + (noVideo ? "?noVideo=1" : "");
         ctx.redirect(dlUrl);
