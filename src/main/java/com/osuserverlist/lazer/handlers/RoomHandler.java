@@ -131,6 +131,20 @@ public class RoomHandler implements Handler {
             logger.debug("Failed to parse create room body: {}", e.getMessage());
         }
 
+        // Players may only open ordinary rooms (the daily challenge and spotlights belong to the server).
+        if (!"normal".equalsIgnoreCase(category) && !"realtime".equalsIgnoreCase(category)) {
+            category = "normal";
+        }
+        if (name.length() > 100) name = name.substring(0, 100);
+        if (password.length() > 64) password = password.substring(0, 64);
+        if (playlistItems.size() > 50) playlistItems = new ArrayList<>(playlistItems.subList(0, 50));
+
+        long openOwned = multiplayerManager.getRooms("all", "owned", null, userId).stream().filter(r -> !r.isEnded()).count();
+        if (openOwned >= 5) {
+            ctx.status(429).json(Map.of("error", "You already host too many open rooms"));
+            return;
+        }
+
         Room room = multiplayerManager.createRoom(userId, name, password, matchType, queueMode,
                 duration, maxAttempts, playlistItems, category);
         room.settings.autoSkip = autoSkip;
@@ -436,6 +450,13 @@ public class RoomHandler implements Handler {
         Room room = multiplayerManager.getRoom(roomId);
         if (room == null) {
             ctx.status(404).json(Map.of("error", "Room not found"));
+            return;
+        }
+
+        // A password-protected room is closed to people who have not joined it (joining checks the password).
+        boolean hasPassword = room.settings.password != null && !room.settings.password.isBlank();
+        if (hasPassword && !room.users.containsKey(userId)) {
+            ctx.status(403).json(Map.of("error", "Join the room first"));
             return;
         }
 
