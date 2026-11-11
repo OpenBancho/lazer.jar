@@ -17,6 +17,10 @@ public class OAuthHandler implements Handler {
     private static final Logger logger = LoggerFactory.getLogger(OAuthHandler.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
+    /** 10 failed logins per 15 minutes, counted per IP and per account name. */
+    private static final com.osuserverlist.lazer.auth.RateLimiter LOGIN_LIMIT =
+            new com.osuserverlist.lazer.auth.RateLimiter(10, 15 * 60_000L);
+
     private final AuthService authService;
     private final com.osuserverlist.lazer.telemetry.TelemetryManager telemetryManager;
     private final com.osuserverlist.lazer.anticheat.LoginTicketVerifier ticketVerifier;
@@ -70,11 +74,21 @@ public class OAuthHandler implements Handler {
             grantType = "password";
         }
 
-        String clientIp = ctx.header("X-Forwarded-For");
+        // X-Real-IP is set by our nginx from the socket address; X-Forwarded-For can be forged by the client.
+        String clientIp = ctx.header("X-Real-IP");
         if (clientIp == null || clientIp.isBlank()) {
             clientIp = ctx.ip();
-        } else {
-            clientIp = clientIp.split(",")[0].trim();
+        }
+        clientIp = clientIp.trim();
+
+        String limitUser = username == null ? "" : username.trim().toLowerCase();
+        if (LOGIN_LIMIT.isBlocked("ip:" + clientIp)
+                || (!limitUser.isEmpty() && LOGIN_LIMIT.isBlocked("user:" + limitUser))
+                || (refreshToken != null && LOGIN_LIMIT.isBlocked("ip:" + clientIp))) {
+            logger.warn("Login rate limit hit: ip={} user={}", clientIp, limitUser);
+            ctx.header("Retry-After", "900");
+            sendError(ctx, 429, "too_many_requests", "Too many failed attempts. Try again in 15 minutes.");
+            return;
         }
 
         if (ticketVerifier.isRequired()
@@ -103,9 +117,12 @@ public class OAuthHandler implements Handler {
                 return;
             }
             if (pair == null) {
+                LOGIN_LIMIT.recordFailure("ip:" + clientIp);
+                LOGIN_LIMIT.recordFailure("user:" + limitUser);
                 sendError(ctx, 401, "invalid_grant", "Invalid username or password.");
                 return;
             }
+            LOGIN_LIMIT.reset("user:" + limitUser);
 
             if (telemetryManager != null) {
                 TokenStore.TokenData tokenData = authService.resolveToken(pair.accessToken);
@@ -132,6 +149,7 @@ public class OAuthHandler implements Handler {
                 return;
             }
             if (pair == null) {
+                LOGIN_LIMIT.recordFailure("ip:" + clientIp);
                 sendError(ctx, 401, "invalid_grant", "Invalid or expired refresh token.");
                 return;
             }
