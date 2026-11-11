@@ -517,7 +517,8 @@ public class RoomHandler implements Handler {
             pp = 0.0f;
         }
 
-        Map<String, Object> statistics = (Map<String, Object>) body.get("statistics");
+        Map<String, Object> statistics = body.get("statistics") instanceof Map<?, ?> st
+                ? (Map<String, Object>) st : new LinkedHashMap<>();
         int n300 = getStat(statistics, "great", "Great", "300");
         int n100 = getStat(statistics, "ok", "Ok", "100");
         int n50 = getStat(statistics, "meh", "Meh", "50");

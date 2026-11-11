@@ -149,7 +149,8 @@ public class SoloScoreHandler {
         String bodySha256 = sha256Hex(ctx.bodyAsBytes());
 
         // Idempotency: return cached response if already submitted
-        if (tokenInfo != null && tokenInfo.submitted && tokenInfo.cachedResponse != null) {
+        if (tokenInfo != null && tokenInfo.submitted && tokenInfo.cachedResponse != null
+                && tokenInfo.userId == user.id && tokenInfo.beatmapId == beatmapId) {
             logger.info("Idempotent replay: returning cached response for score token {}", token);
             ctx.status(200).json(tokenInfo.cachedResponse);
             return;
@@ -198,7 +199,8 @@ public class SoloScoreHandler {
             pp = 0.0f;
         }
 
-        Map<String, Object> statistics = (Map<String, Object>) body.get("statistics");
+        Map<String, Object> statistics = body.get("statistics") instanceof Map<?, ?> st
+                ? (Map<String, Object>) st : new LinkedHashMap<>();
         int n300 = getStat(statistics, "great", "Great", "300");
         int n100 = getStat(statistics, "ok", "Ok", "100");
         int n50 = getStat(statistics, "meh", "Meh", "50");
