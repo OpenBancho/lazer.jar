@@ -229,9 +229,32 @@ public class MultiplayerHub {
         }
     }
 
+    private static final java.util.Set<String> HOST_ONLY_TARGETS = java.util.Set.of(
+            "changesettings", "startmatch", "abortmatch", "abortgameplay", "transferhost", "kickuser");
+
     private void handleHubInvocation(ClientSession session, String invocationId, String target,
                                     MessageUnpacker unpacker, int argCount) throws IOException {
         logger.info("MultiplayerHub invoke target={} id={} userId={}", target, invocationId, session.userId);
+
+        // An unauthenticated connection may not do anything in a room.
+        if (session.userId <= 0) {
+            if (invocationId != null) {
+                sendVoidCompletion(session, invocationId);
+            }
+            return;
+        }
+
+        // Only the host of the room the caller is in may run these.
+        if (HOST_ONLY_TARGETS.contains(target.toLowerCase(java.util.Locale.ROOT))) {
+            Room guarded = multiplayerManager.getRoom(session.currentRoomId);
+            if (guarded == null || !guarded.users.containsKey(session.userId) || guarded.hostUserId != session.userId) {
+                logger.warn("MultiplayerHub: user {} tried {} without being the host", session.userId, target);
+                if (invocationId != null) {
+                    sendVoidCompletion(session, invocationId);
+                }
+                return;
+            }
+        }
 
         if ("CreateRoom".equalsIgnoreCase(target)) {
             String name = "Multiplayer Room";
