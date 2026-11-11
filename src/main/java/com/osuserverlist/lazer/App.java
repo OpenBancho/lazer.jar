@@ -77,8 +77,16 @@ public class App {
         Javalin app = Javalin.create(javalinConfig -> {
             javalinConfig.jetty.threadPool = new org.eclipse.jetty.util.thread.QueuedThreadPool(250, 10, 60000);
             javalinConfig.bundledPlugins.enableCors(cors -> {
+                // Browsers may only call the API from our own site (override with CORS_ORIGINS=a,b).
                 cors.addRule(rule -> {
-                    rule.anyHost();
+                    String custom = dotenv.get("CORS_ORIGINS", "").trim();
+                    if (!custom.isEmpty()) {
+                        for (String origin : custom.split(",")) {
+                            if (!origin.isBlank()) rule.allowHost(origin.trim());
+                        }
+                    } else {
+                        rule.allowHost("https://" + config.domain, "https://*." + config.domain);
+                    }
                 });
             });
             javalinConfig.requestLogger.http((ctx, ms) -> {
