@@ -50,7 +50,15 @@ public class ServerConfig {
         this.directDownload = dotenv.get("DIRECT_DOWNLOAD", "https://catboy.best/d");
 
         this.discordWebhookUrl = dotenv.get("DISCORD_WEBHOOK_URL", "");
-        this.hmacSecret = dotenv.get("HMAC_SECRET", "default_lazer_secret_key");
+        String hmac = dotenv.get("HMAC_SECRET", "").trim();
+        if (hmac.isEmpty() || hmac.equals("default_lazer_secret_key") || hmac.length() < 32) {
+            // Never run with a known secret: fall back to a random one (fingerprints then change on every restart).
+            byte[] random = new byte[32];
+            new java.security.SecureRandom().nextBytes(random);
+            hmac = java.util.HexFormat.of().formatHex(random);
+            System.err.println("WARNING: HMAC_SECRET is missing or weak (needs 32+ characters); using a random one for this run");
+        }
+        this.hmacSecret = hmac;
 
         this.acWebhookFlags = dotenv.get("AC_WEBHOOK_FLAGS", "");
         this.acApiKeys = dotenv.get("AC_API_KEYS", "");

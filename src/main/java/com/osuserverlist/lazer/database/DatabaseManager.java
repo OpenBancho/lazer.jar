@@ -574,6 +574,9 @@ public class DatabaseManager {
     public BeatmapRecord fetchAndSaveBeatmap(int id, String md5) {
         String apiKey = (config != null && config.osuApiKey != null && !config.osuApiKey.isBlank())
                 ? config.osuApiKey : "";
+        if (apiKey.isEmpty()) {
+            return null;
+        }
 
         // Try fast mirror direct search / lookup first or official osu! API with 1.5s timeout
         String url = (id > 0)
@@ -603,6 +606,9 @@ public class DatabaseManager {
     public void fetchAndSaveBeatmapSet(int setId) {
         String apiKey = (config != null && config.osuApiKey != null && !config.osuApiKey.isBlank())
                 ? config.osuApiKey : "";
+        if (apiKey.isEmpty()) {
+            return;
+        }
 
         String url = "https://osu.ppy.sh/api/get_beatmaps?k=" + apiKey + "&s=" + setId;
         try {
