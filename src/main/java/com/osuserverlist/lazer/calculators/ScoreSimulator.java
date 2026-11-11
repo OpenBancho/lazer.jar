@@ -175,8 +175,12 @@ public class ScoreSimulator {
 
         // Ensure accuracy is valid and clamped between 0.0 and 1.0
         float finalAccuracy = Math.max(0.0f, Math.min(1.0f, clientAccuracy));
+        float computedAccuracy = calculateAccuracy(baseRuleset, n300, n100, n50, nmiss, ngeki, nkatu);
         if (finalAccuracy <= 0.0f && (n300 + n100 + n50) > 0) {
-            finalAccuracy = calculateAccuracy(baseRuleset, n300, n100, n50, nmiss, ngeki, nkatu);
+            finalAccuracy = computedAccuracy;
+        } else if (computedAccuracy > 0.0f && finalAccuracy > computedAccuracy + 0.03f) {
+            // lazer also counts slider ticks, so a small difference is normal; a big gain over the hit counts is not.
+            finalAccuracy = computedAccuracy;
         }
 
         // 2. Calculate genuine server grade using osu!lazer rules
