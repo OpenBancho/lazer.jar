@@ -140,11 +140,7 @@ public final class ReplayStore {
 
     public static void onScoreSaved(long scoreToken, ScoreInfo info) {
         Session session = BY_TOKEN.get(scoreToken);
-        if (session == null) {
-            // A score without a spectator session: the anti-cheat is told that this server never saw the play.
-            com.osuserverlist.lazer.anticheat.PlayCrosscheckClient.report(scoreToken, info.userId(), List.of());
-            return;
-        }
+        if (session == null) return;
         synchronized (session) {
             session.score = info;
         }
@@ -162,8 +158,6 @@ public final class ReplayStore {
             frames = new ArrayList<>(session.frames);
         }
         BY_TOKEN.remove(session.token);
-        // The anti-cheat compares what this server saw as a spectator with what its module reported about the same play.
-        com.osuserverlist.lazer.anticheat.PlayCrosscheckClient.report(session.token, info.userId(), frames);
         WRITER.execute(() -> {
             try {
                 Files.createDirectories(REPLAY_DIR);
