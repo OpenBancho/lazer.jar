@@ -58,6 +58,7 @@ public class DatabaseManager {
             ensureLazerScoreColumn();
             ensureTelemetryTable();
             ensureAnticheatFlagsTable();
+            ensureAnticheatCommandsTable();
             ensureScorePinsTable();
         } catch (Exception e) {
             logger.error("Failed to connect to MySQL database: {}", e.getMessage());
@@ -1614,6 +1615,119 @@ public class DatabaseManager {
             logger.error("Error counting scores: {}", e.getMessage());
         }
         return 0;
+    }
+
+    /** The commands of the anti-cheat that were carried out: a command_id is executed once, however often it is delivered. */
+    private void ensureAnticheatCommandsTable() {
+        String sql = "CREATE TABLE IF NOT EXISTS anticheat_commands (" +
+                "command_id VARCHAR(64) PRIMARY KEY, " +
+                "type VARCHAR(16) NOT NULL, " +
+                "user_id INT NOT NULL, " +
+                "executed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, " +
+                "INDEX idx_command_user (user_id)" +
+                ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci";
+        try (Connection conn = getConnection();
+             Statement stmt = conn.createStatement()) {
+            stmt.executeUpdate(sql);
+        } catch (SQLException e) {
+            logger.warn("Could not check/create anticheat_commands table: {}", e.getMessage());
+        }
+    }
+
+    /** True when this call is the first to claim the command; false when it was claimed (executed) before. */
+    public boolean claimAnticheatCommand(String commandId, String type, int userId) {
+        String sql = "INSERT IGNORE INTO anticheat_commands (command_id, type, user_id) VALUES (?, ?, ?)";
+        try (Connection conn = getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setString(1, commandId);
+            stmt.setString(2, type);
+            stmt.setInt(3, userId);
+            return stmt.executeUpdate() > 0;
+        } catch (SQLException e) {
+            logger.error("Error claiming anti-cheat command {}: {}", commandId, e.getMessage());
+            throw new IllegalStateException("the command could not be recorded", e);
+        }
+    }
+
+    /** Gives a claim back, so that a command that failed to run is executed when the anti-cheat delivers it again. */
+    public void releaseAnticheatCommand(String commandId) {
+        try (Connection conn = getConnection();
+             PreparedStatement stmt = conn.prepareStatement("DELETE FROM anticheat_commands WHERE command_id = ?")) {
+            stmt.setString(1, commandId);
+            stmt.executeUpdate();
+        } catch (SQLException e) {
+            logger.error("Error releasing anti-cheat command {}: {}", commandId, e.getMessage());
+        }
+    }
+
+    /**
+     * Restricts or unrestricts an account: the UNRESTRICT bit (1) of priv, the one bancho.jar uses. Rankings, chat and spectating
+     * of this server read it. The cached copies of the account are dropped so that the change is seen at once.
+     * Returns false when the account does not exist or could not be updated.
+     */
+    public boolean setRestricted(int userId, boolean restricted) {
+        User user = findUserById(userId);
+        if (user == null) return false;
+
+        String sql = restricted ? "UPDATE users SET priv = priv & ~1 WHERE id = ?" : "UPDATE users SET priv = priv | 1 WHERE id = ?";
+        try (Connection conn = getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setInt(1, userId);
+            stmt.executeUpdate();
+        } catch (SQLException e) {
+            logger.error("Error {} user {}: {}", restricted ? "restricting" : "unrestricting", userId, e.getMessage());
+            return false;
+        }
+
+        userIdCache.remove(userId);
+        if (user.safeName != null) userNameCache.remove(user.safeName);
+        if (user.name != null) userNameCache.remove(user.name.toLowerCase().replaceAll(" ", "_"));
+        return true;
+    }
+
+    /** One line in the staff log that bancho.jar shows in its admin panel (from_id 0 = the system). Never throws. */
+    public void writeStaffLog(int fromId, int toId, String action, String message) {
+        String sql = "INSERT INTO staff_logs (from_id, to_id, action, msg) VALUES (?, ?, ?, ?)";
+        try (Connection conn = getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setInt(1, fromId);
+            stmt.setInt(2, toId);
+            stmt.setString(3, action.length() > 32 ? action.substring(0, 32) : action);
+            stmt.setString(4, message != null && message.length() > 2048 ? message.substring(0, 2048) : message);
+            stmt.executeUpdate();
+        } catch (SQLException e) {
+            logger.warn("Could not write the staff log entry '{}' for user {}: {}", action, toId, e.getMessage());
+        }
+    }
+
+    /** Removes the anti-cheat flags of one code from an account. Returns how many were removed. */
+    public int deleteAnticheatFlags(int userId, String code) {
+        try (Connection conn = getConnection();
+             PreparedStatement stmt = conn.prepareStatement("DELETE FROM anticheat_flags WHERE user_id = ? AND code = ?")) {
+            stmt.setInt(1, userId);
+            stmt.setString(2, code);
+            return stmt.executeUpdate();
+        } catch (SQLException e) {
+            logger.error("Error removing flags {} of user {}: {}", code, userId, e.getMessage());
+            throw new IllegalStateException("the flags could not be removed", e);
+        }
+    }
+
+    /** The pp of an account in every mode that has any, for the leaderboards of stable. */
+    public java.util.Map<Integer, Double> findPpByMode(int userId) {
+        java.util.Map<Integer, Double> result = new java.util.LinkedHashMap<>();
+        try (Connection conn = getConnection();
+             PreparedStatement stmt = conn.prepareStatement("SELECT mode, pp FROM stats WHERE id = ?")) {
+            stmt.setInt(1, userId);
+            try (ResultSet rs = stmt.executeQuery()) {
+                while (rs.next()) {
+                    result.put(rs.getInt("mode"), rs.getDouble("pp"));
+                }
+            }
+        } catch (SQLException e) {
+            logger.warn("Could not read the pp of user {}: {}", userId, e.getMessage());
+        }
+        return result;
     }
 
     private void ensureAnticheatFlagsTable() {

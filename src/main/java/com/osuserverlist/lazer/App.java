@@ -32,6 +32,7 @@ public class App {
         Dotenv dotenv = Dotenv.configure().ignoreIfMissing().load();
         ServerConfig config = new ServerConfig(dotenv);
         com.osuserverlist.lazer.replay.ReplayStore.configure(config.replaysDir);
+        com.osuserverlist.lazer.anticheat.PlayCrosscheckClient.configure(config);
 
         DatabaseManager databaseManager = new DatabaseManager();
         databaseManager.init(config);
@@ -57,6 +58,8 @@ public class App {
         com.osuserverlist.lazer.signalr.SpectatorHub spectatorHub = new com.osuserverlist.lazer.signalr.SpectatorHub(authService, databaseManager, onlineManager);
         ChatHandler chatHandler = new ChatHandler(authService, databaseManager, onlineManager, config, notificationHub);
         AnticheatFlagHandler anticheatFlagHandler = new AnticheatFlagHandler(config, databaseManager);
+        com.osuserverlist.lazer.handlers.AnticheatCommandHandler anticheatCommandHandler =
+                new com.osuserverlist.lazer.handlers.AnticheatCommandHandler(config, databaseManager, anticheatFlagHandler, tokenStore.getJedisPool());
         AnticheatVouchHandler anticheatVouchHandler = new AnticheatVouchHandler(authService, databaseManager, new com.osuserverlist.lazer.anticheat.AnticheatVouchClient(config));
         SoloScoreHandler soloScoreHandler = new SoloScoreHandler(authService, databaseManager, config, spectatorHub, anticheatFlagHandler.signatureTracker());
         ProfileExtras profileExtras = new ProfileExtras(databaseManager, authService);
@@ -172,6 +175,7 @@ public class App {
             javalinConfig.routes.get("/web/osu-search-set.php", beatmapHandler::handleLegacySearchSet);
             javalinConfig.routes.post("/api/v2/anticheat/flag", anticheatFlagHandler::handleFlag);
             javalinConfig.routes.post("/api/v2/anticheat/signature", anticheatFlagHandler::handleSignature);
+            javalinConfig.routes.post("/api/v2/anticheat/command", anticheatCommandHandler::handleCommand);
             // Staff of this server vouch for a player the anti-cheat flagged (bearer token of a MODERATOR / ADMINISTRATOR / DEVELOPER).
             javalinConfig.routes.get("/api/v2/anticheat/vouch/status", anticheatVouchHandler::handleStatus);
             javalinConfig.routes.get("/api/v2/anticheat/vouches", anticheatVouchHandler::handleList);

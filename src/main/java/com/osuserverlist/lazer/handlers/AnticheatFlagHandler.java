@@ -207,6 +207,11 @@ public class AnticheatFlagHandler {
         return announce ? RaiseResult.RECORDED : RaiseResult.DUPLICATE;
     }
 
+    /** Whether the caller presents one of the anti-cheat's API keys (also used by the command endpoint). */
+    public boolean isAuthorized(Context ctx) {
+        return authenticate(ctx) != null;
+    }
+
     private ApiKey authenticate(Context ctx) {
         String provided = ctx.header("X-API-Key");
         if (provided == null || provided.isBlank()) {
